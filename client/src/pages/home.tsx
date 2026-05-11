@@ -248,60 +248,48 @@ export default function Home() {
 function HeroPhone() {
   return (
     <div
-      className="relative w-[310px] md:w-[390px] aspect-[1.28/1] rounded-[2rem] bg-white/70 dark:bg-black/20 p-3 shadow-2xl"
+      className="relative w-[230px] sm:w-[260px] md:w-[315px] aspect-[9/17] rotate-[3deg] rounded-[2.65rem] bg-[#2d2926] p-2 shadow-[0_34px_90px_rgba(70,42,38,0.28)]"
       aria-hidden="true"
     >
-      <div className="absolute inset-0 rounded-[2rem] ring-1 ring-black/10" />
-      <div className="relative grid h-full w-full grid-cols-2 gap-3">
+      <div className="absolute -inset-6 -z-10 rounded-[3.25rem] bg-primary/10 blur-3xl" />
+      <div className="absolute inset-0 rounded-[2.65rem] ring-1 ring-black/10" />
+      <div className="relative h-full w-full overflow-hidden rounded-[2.18rem]">
         <div
-          className="relative overflow-hidden rounded-[1.35rem] bg-[#8eabc9] shadow-xl"
+          className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(155deg, #d8e8fb 0%, #88a9d2 42%, #4f74a6 100%)",
+              "linear-gradient(158deg, #FFE4E6 0%, #FFBBC4 34%, #EC5262 68%, #8F2331 100%)",
           }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_38%,rgba(255,255,255,.75)_0,rgba(255,255,255,.1)_32%,transparent_62%)]" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/25 via-transparent to-black/10" />
-          <div className="absolute left-3 top-3 flex gap-1">
-            <span className="size-2 rounded-full bg-yellow-300" />
-            <span className="size-2 rounded-full bg-orange-500" />
+        />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_22%,rgba(255,255,255,.62)_0,rgba(255,255,255,.14)_24%,transparent_50%)]" />
+        <div className="absolute inset-x-[16%] top-[18%] h-[28%] rounded-[2rem] bg-white/16 blur-xl" />
+        <div className="absolute left-[13%] top-[28%] h-[19%] w-[44%] rounded-[1.4rem] bg-white/30 shadow-lg backdrop-blur-sm" />
+        <div className="absolute right-[12%] top-[35%] h-[24%] w-[36%] rounded-[1.4rem] bg-black/14 shadow-lg backdrop-blur-sm" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/42 via-transparent to-white/12" />
+
+        <div className="relative flex h-full flex-col p-5 text-white">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-white/78">
+            <span>9:41</span>
+            <span className="tracking-[0.18em]">•••</span>
           </div>
-          <div className="absolute inset-x-3 top-7 text-center text-white">
-            <div className="text-[24px] md:text-[30px] font-black leading-[.9] drop-shadow">
-              这家酒店
-              <br />
-              真的会住!
+
+          <div className="mt-auto pb-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/72">
+              XHS Viral Cover
             </div>
-            <div className="mt-1.5 text-xs font-black text-yellow-200 drop-shadow">把美好记住 100 次!</div>
-          </div>
-          <div className="absolute left-[11%] bottom-[20%] h-[27%] w-[42%] rounded-xl bg-white/40 shadow-lg backdrop-blur" />
-          <div className="absolute right-[10%] bottom-[17%] h-[34%] w-[38%] rounded-xl bg-black/20 shadow-lg backdrop-blur" />
-          <div className="absolute inset-x-4 bottom-4 flex items-center justify-between rounded-2xl bg-white/25 px-3 py-2 text-[10px] font-semibold text-white backdrop-blur">
-            <span>实拍优化</span>
-            <span>封面排版</span>
-          </div>
-        </div>
-        <div
-          className="relative overflow-hidden rounded-[1.35rem] bg-[#d8d1c8] shadow-xl"
-          style={{
-            background:
-              "linear-gradient(155deg, #f2eee7 0%, #d8d1c8 45%, #a99c90 100%)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_43%,rgba(255,255,255,.85)_0,rgba(255,255,255,.12)_36%,transparent_66%)]" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/22 via-transparent to-white/10" />
-          <div className="absolute inset-x-3 top-9 text-center text-white">
-            <div className="text-[24px] md:text-[30px] font-black leading-[.95] drop-shadow">
-              被低估的
+            <div className="mt-2 text-[30px] md:text-[36px] font-black leading-[0.93] tracking-tight drop-shadow-[0_3px_10px_rgba(0,0,0,.26)]">
+              蹲到了!
               <br />
-              宝藏酒店
+              这家酒店必须冲
             </div>
-          </div>
-          <div className="absolute left-[10%] bottom-[16%] h-[28%] w-[42%] rounded-xl bg-white/40 shadow-lg backdrop-blur" />
-          <div className="absolute right-[11%] bottom-[29%] h-[30%] w-[36%] rounded-xl bg-white/25 shadow-lg backdrop-blur" />
-          <div className="absolute inset-x-4 bottom-4 flex items-center justify-between rounded-2xl bg-white/25 px-3 py-2 text-[10px] font-semibold text-white backdrop-blur">
-            <span>黄金分割</span>
-            <span>小红书感</span>
+            <div className="mt-4 inline-flex items-center rounded-full bg-white/18 px-3 py-1.5 text-[10px] font-bold text-white backdrop-blur-md">
+              由你的实拍生成
+            </div>
+            <div className="mt-5 flex items-center gap-4 text-[10px] font-semibold text-white/86">
+              <span>♥ 12.3k</span>
+              <span>☁ 482</span>
+              <span>★ 收藏</span>
+            </div>
           </div>
         </div>
       </div>
