@@ -258,7 +258,7 @@ function HeroPhone() {
           className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(158deg, #FFE4E6 0%, #FFBBC4 34%, #EC5262 68%, #8F2331 100%)",
+              "linear-gradient(158deg, #FFE4E6 0%, #FFB6C2 31%, #E84D60 65%, #7E1E2D 100%)",
           }}
         />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_22%,rgba(255,255,255,.62)_0,rgba(255,255,255,.14)_24%,transparent_50%)]" />
@@ -273,22 +273,29 @@ function HeroPhone() {
             <span className="tracking-[0.18em]">•••</span>
           </div>
 
-          <div className="mt-auto pb-4">
-            <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/72">
+          <div className="mt-auto pb-5">
+            <div className="text-[10px] md:text-[11px] font-semibold uppercase tracking-[0.32em] text-white/74">
               XHS Viral Cover
             </div>
-            <div className="mt-2 text-[30px] md:text-[36px] font-black leading-[0.93] tracking-tight drop-shadow-[0_3px_10px_rgba(0,0,0,.26)]">
+            <div className="mt-2 text-[33px] md:text-[39px] font-black leading-[0.98] tracking-[-0.08em] drop-shadow-[0_4px_12px_rgba(0,0,0,.30)]">
               蹲到了!
               <br />
               这家酒店必须冲
             </div>
-            <div className="mt-4 inline-flex items-center rounded-full bg-white/18 px-3 py-1.5 text-[10px] font-bold text-white backdrop-blur-md">
+            <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3.5 py-1.5 text-[10px] md:text-[11px] font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,.18)] backdrop-blur-md">
+              <span className="size-1.5 rounded-full bg-[#ff4f8a] shadow-[0_0_10px_rgba(255,79,138,.95)]" />
               由你的实拍生成
             </div>
-            <div className="mt-5 flex items-center gap-4 text-[10px] font-semibold text-white/86">
-              <span>♥ 12.3k</span>
-              <span>☁ 482</span>
-              <span>★ 收藏</span>
+            <div className="mt-5 flex items-center gap-4 text-[10px] md:text-[11px] font-bold text-white/90">
+              <span>
+                <span className="text-[#ff4f8a]">♥</span> 12.3k
+              </span>
+              <span>
+                <span className="text-[#d9d4ff]">☁</span> 482
+              </span>
+              <span>
+                <span className="text-[#ffcf2e]">★</span> 收藏
+              </span>
             </div>
           </div>
         </div>

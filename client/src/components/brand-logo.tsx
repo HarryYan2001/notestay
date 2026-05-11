@@ -1,6 +1,7 @@
 interface BrandLogoProps {
   size?: number;
   showWordmark?: boolean;
+  showTagline?: boolean;
   className?: string;
 }
 
@@ -10,7 +11,12 @@ interface BrandLogoProps {
  * paired with a small dot acting as a memory pin. Works as a pure SVG icon
  * at any size; the optional wordmark adds the Chinese + English brand block.
  */
-export function BrandLogo({ size = 36, showWordmark = true, className }: BrandLogoProps) {
+export function BrandLogo({
+  size = 36,
+  showWordmark = true,
+  showTagline = true,
+  className,
+}: BrandLogoProps) {
   return (
     <div
       className={`flex items-center gap-2.5 ${className ?? ""}`}
@@ -44,9 +50,11 @@ export function BrandLogo({ size = 36, showWordmark = true, className }: BrandLo
               NoteStay
             </span>
           </div>
-          <div className="text-[9px] leading-[1.25] text-muted-foreground tracking-wide">
-            酒店美好,一键记住
-          </div>
+          {showTagline && (
+            <div className="text-[9px] leading-[1.25] text-muted-foreground tracking-wide">
+              酒店美好,一键记住
+            </div>
+          )}
         </div>
       )}
     </div>

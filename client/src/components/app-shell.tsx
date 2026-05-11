@@ -19,7 +19,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="max-w-6xl mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
           <Link href="/" data-testid="link-home">
             <a className="flex items-center" aria-label="返回首页">
-              <BrandLogo size={32} />
+              <BrandLogo size={32} showTagline={false} />
             </a>
           </Link>
           <nav className="hidden md:flex items-center gap-1 text-sm" aria-label="主导航">
