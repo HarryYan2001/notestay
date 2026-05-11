@@ -77,7 +77,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   if (nonEmpty(input.viralRef))
     warnings.push("已分析所附爆款笔记链接的结构、节奏与标题逻辑作为参考,不会复制其原文或图片内容。");
 
-  const seedString = `${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}`;
+  const seedString = `${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
 
   // 2) Title
@@ -89,6 +89,14 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const prefix = pick(style.titlePrefixes, seed);
   const suffix = pick(style.titleSuffixes, seed + 7);
   const title = `${prefix}${subject}｜${suffix}`;
+  const coverHeadlines = [
+    `${subject}\n真的很会住!`,
+    `这家酒店\n太适合收藏!`,
+    `被低估的\n宝藏酒店`,
+    `住进这里\n像在度假`,
+    `${subject}\n出片到离谱`,
+  ];
+  const coverHeadline = pick(coverHeadlines, seed + 29);
   const altTitles = [
     `${city ? `${city}｜` : ""}${subject}｜${pick(style.titleSuffixes, seed + 13)}`,
     `${pick(style.titlePrefixes, seed + 17)}${subject}｜${pick(style.toneAdjectives, seed + 3)}到想再来一次`,
@@ -182,7 +190,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     `${style.name}风格真的太对我胃口了,求博主多更!`,
   ];
 
-  // 6) Page layout (cover + scenes + verdict)
+  // 6) Page layout (cover + image-only inner pages)
   const byCat = categorizeImages(input.images);
   const orderedCategories = IMAGE_CATEGORIES.filter((c) => byCat[c].length > 0);
   const layout: PageLayout[] = [];
@@ -190,7 +198,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   layout.push({
     index: 0,
     role: "cover",
-    headline: style.coverHeadline,
+    headline: coverHeadline,
     caption: title,
     imageId: input.images[0]?.id,
     gradient: gradientFor(input.style, 0),
@@ -212,27 +220,19 @@ export function generateNote(input: AppInputState): GeneratedNote {
     });
   }
 
-  // If no images at all, add 3 example layout cards as scaffolds
+  // If no images at all, add image-only example layout cards as scaffolds
   if (input.images.length === 0) {
-    ["房间", "空间细节", "我的总结"].forEach((label, i) => {
+    ["房间", "空间细节"].forEach((label, i) => {
       layout.push({
         index: pageIdx + i,
         role: "scene",
         headline: `${label}｜版式参考`,
-        caption: `未上传实拍图,以下为可替换的版式占位,实际发布前请放入你的真实照片。`,
+        caption: "",
         gradient: gradientFor(input.style, pageIdx + i),
       });
     });
-    pageIdx += 3;
+    pageIdx += 2;
   }
-
-  layout.push({
-    index: pageIdx,
-    role: "verdict",
-    headline: `总结一页 / ${pick(style.toneAdjectives, seed + 9)}`,
-    caption: `把这次入住浓缩成一页:${pick(style.titleSuffixes, seed + 19)}。`,
-    gradient: gradientFor(input.style, pageIdx + 1),
-  });
 
   // 7) Sticker copy + cover sub
   const stickerCopy = [
@@ -255,7 +255,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     tags,
     commentSeeds,
     pageLayout: layout,
-    coverHeadline: style.coverHeadline,
+    coverHeadline,
     coverSubline,
     stickerCopy,
     warnings,

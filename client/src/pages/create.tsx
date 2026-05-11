@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useLocation } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { useApp } from "@/lib/app-state";
@@ -67,20 +68,27 @@ export default function CreatePage() {
   async function handleGenerate() {
     setGenerating(true);
     setAgentStep(0);
-    // simulate 3-agent pipeline
-    const steps = [
-      "内容理解 Agent · 解析素材与心得",
-      "视觉优化 Agent · 排版与封面建议",
-      "互动提升 Agent · 标题、标签与评论引导",
-    ];
-    for (let i = 0; i < steps.length; i++) {
-      setAgentStep(i + 1);
-      await new Promise((r) => setTimeout(r, 650));
+    try {
+      // simulate 3-agent pipeline
+      const steps = [
+        "内容理解 Agent · 解析素材与心得",
+        "视觉优化 Agent · 排版与封面建议",
+        "互动提升 Agent · 标题、标签与评论引导",
+      ];
+      for (let i = 0; i < steps.length; i++) {
+        setAgentStep(i + 1);
+        await new Promise((r) => setTimeout(r, 650));
+      }
+      const note = generateNote(app.state);
+      flushSync(() => {
+        app.setGenerated(note);
+        setGenerating(false);
+      });
+      navigate("/result");
+    } catch (error) {
+      console.error("Failed to generate note", error);
+      setGenerating(false);
     }
-    const note = generateNote(app.state);
-    app.setGenerated(note);
-    setGenerating(false);
-    navigate("/result");
   }
 
   const canGenerate =
@@ -100,7 +108,7 @@ export default function CreatePage() {
           <div>
             <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Step 1 / 2</div>
             <h1 className="mt-1 text-2xl md:text-3xl font-bold tracking-tight">素材输入</h1>
-            <p className="mt-2 text-sm text-muted-foreground max-w-xl">
+            <p className="mt-2 text-sm text-muted-foreground whitespace-nowrap overflow-x-auto scroll-area-hide">
               上传你的实拍照片,填写你的真实心得。我们只基于你提供的内容生成笔记,空字段不会被填空。
             </p>
           </div>

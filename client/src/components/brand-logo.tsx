@@ -37,14 +37,14 @@ export function BrandLogo({ size = 36, showWordmark = true, className }: BrandLo
       </svg>
 
       {showWordmark && (
-        <div className="leading-none">
-          <div className="text-base font-bold tracking-tight" data-testid="text-brand-cn">
+        <div className="min-w-[126px] flex flex-col justify-center gap-1 leading-tight">
+          <div className="flex items-baseline gap-1.5 text-base font-bold tracking-tight" data-testid="text-brand-cn">
             记住
-            <span className="ml-1.5 text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground align-middle">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               NoteStay
             </span>
           </div>
-          <div className="mt-1 text-[10px] text-muted-foreground tracking-wide">
+          <div className="text-[9px] leading-[1.25] text-muted-foreground tracking-wide">
             酒店美好,一键记住
           </div>
         </div>

@@ -53,9 +53,9 @@ export default function Home() {
   return (
     <AppShell>
       {/* HERO */}
-      <section className="relative overflow-hidden">
-        <div className="max-w-6xl mx-auto px-4 md:px-8 pt-12 md:pt-24 pb-16 md:pb-24">
-          <div className="grid md:grid-cols-12 gap-10 items-center">
+      <section className="relative overflow-visible min-h-[calc(100svh-64px)] flex items-center">
+        <div className="w-full max-w-6xl mx-auto px-4 md:px-8 py-8 md:py-10">
+          <div className="grid md:grid-cols-12 gap-8 items-center">
             <div className="md:col-span-7">
               <div
                 className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium"
@@ -224,7 +224,7 @@ export default function Home() {
               <h3 className="text-2xl md:text-4xl font-bold tracking-tight text-balance">
                 把这次入住,变成一篇值得被收藏的笔记。
               </h3>
-              <p className="mt-4 text-sm md:text-base text-muted-foreground">
+              <p className="mt-4 text-sm md:text-base text-muted-foreground whitespace-nowrap overflow-x-auto scroll-area-hide">
                 现在打开,几分钟内你就能拿到一份小红书风格的完整图文笔记 —— 来自你自己的素材,不靠瞎编。
               </p>
               <div className="mt-6">
@@ -248,11 +248,11 @@ export default function Home() {
 function HeroPhone() {
   return (
     <div
-      className="relative w-[260px] md:w-[300px] aspect-[9/19] rounded-[2.4rem] bg-foreground/90 dark:bg-black p-2 shadow-2xl rotate-[3deg]"
+      className="relative w-[240px] md:w-[280px] aspect-[4/5] rounded-[2rem] bg-foreground/90 dark:bg-black p-2 shadow-2xl rotate-[2deg]"
       aria-hidden="true"
     >
-      <div className="absolute inset-0 rounded-[2.4rem] ring-1 ring-black/10" />
-      <div className="relative h-full w-full rounded-[2rem] overflow-hidden">
+      <div className="absolute inset-0 rounded-[2rem] ring-1 ring-black/10" />
+      <div className="relative h-full w-full rounded-[1.6rem] overflow-hidden">
         <div
           className="absolute inset-0"
           style={{

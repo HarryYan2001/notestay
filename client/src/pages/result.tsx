@@ -24,6 +24,7 @@ export default function ResultPage() {
   const [, navigate] = useLocation();
   const [copied, setCopied] = useState<string | null>(null);
   const [pageIdx, setPageIdx] = useState(0);
+  const imageMap = useImageMap();
 
   // If no generated note yet, redirect back to create
   useEffect(() => {
@@ -42,6 +43,10 @@ export default function ResultPage() {
 
   const note = app.generated;
   const style = STYLES[note.styleKey];
+
+  function updateNote(patch: Partial<GeneratedNote>) {
+    app.setGenerated({ ...note, ...patch });
+  }
 
   function copy(label: string, text: string) {
     navigator.clipboard.writeText(text).then(() => {
@@ -142,7 +147,7 @@ export default function ResultPage() {
               pageIdx={pageIdx}
               onPrev={() => setPageIdx((i) => Math.max(0, i - 1))}
               onNext={() => setPageIdx((i) => Math.min(note.pageLayout.length - 1, i + 1))}
-              imageMap={useImageMap()}
+              imageMap={imageMap}
             />
             <p className="mt-3 text-xs text-muted-foreground text-center">
               手机端预览 · 模拟小红书笔记翻页,所见即所得
@@ -163,9 +168,14 @@ export default function ResultPage() {
                 />
               }
             >
-              <div className="text-xl md:text-2xl font-bold leading-snug" data-testid="text-title">
-                {note.title}
-              </div>
+              <textarea
+                value={note.title}
+                onChange={(e) => updateNote({ title: e.target.value })}
+                rows={2}
+                className="w-full rounded-xl border border-input bg-background p-3 text-xl md:text-2xl font-bold leading-snug focus:border-primary focus:outline-none resize-none"
+                data-testid="input-edit-title"
+                aria-label="编辑标题"
+              />
               <div className="mt-3 space-y-1">
                 {note.altTitles.map((t, i) => (
                   <div
@@ -192,12 +202,14 @@ export default function ResultPage() {
                 />
               }
             >
-              <pre
-                className="whitespace-pre-wrap text-sm leading-relaxed font-sans"
-                data-testid="text-body"
-              >
-                {note.body}
-              </pre>
+              <textarea
+                value={note.body}
+                onChange={(e) => updateNote({ body: e.target.value })}
+                rows={14}
+                className="w-full rounded-xl border border-input bg-background p-3 text-sm leading-relaxed focus:border-primary focus:outline-none resize-y"
+                data-testid="input-edit-body"
+                aria-label="编辑正文"
+              />
             </Block>
 
             {/* Tags */}
@@ -244,40 +256,6 @@ export default function ResultPage() {
                       {copied === `sticker-${i}` ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                     </button>
                   </div>
-                ))}
-              </div>
-            </Block>
-
-            {/* Page layout */}
-            <Block title="内页排版建议" testId="block-layout">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {note.pageLayout.map((p) => (
-                  <button
-                    type="button"
-                    key={p.index}
-                    onClick={() => setPageIdx(p.index)}
-                    className={`text-left rounded-xl border p-3 aspect-[3/4] flex flex-col justify-between text-white relative overflow-hidden ${
-                      pageIdx === p.index ? "ring-2 ring-primary border-primary" : "border-card-border"
-                    }`}
-                    style={{ background: p.gradient }}
-                    data-testid={`button-layout-page-${p.index}`}
-                  >
-                    {p.imageId && useImageMap()[p.imageId] && (
-                      <img
-                        src={useImageMap()[p.imageId]}
-                        alt=""
-                        className="absolute inset-0 size-full object-cover"
-                      />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
-                    <div className="relative text-[9px] uppercase tracking-[0.18em] opacity-90">
-                      P{p.index + 1} · {roleLabel(p.role)}
-                    </div>
-                    <div className="relative">
-                      <div className="text-sm font-bold leading-tight drop-shadow">{p.headline}</div>
-                      <div className="mt-1 text-[10px] opacity-85 line-clamp-2">{p.caption}</div>
-                    </div>
-                  </button>
                 ))}
               </div>
             </Block>
@@ -441,34 +419,14 @@ function PhonePreview({
 
           {/* image / cover area */}
           <div className="relative aspect-[3/4]">
-            {current.imageId && imageMap[current.imageId] ? (
+            {current.role === "cover" ? (
+              <CoverArt note={note} styleName={style.english} current={current} imageUrls={Object.values(imageMap)} />
+            ) : current.imageId && imageMap[current.imageId] ? (
               <img src={imageMap[current.imageId]} alt="" className="absolute inset-0 size-full object-cover" />
             ) : (
               <div className="absolute inset-0" style={{ background: current.gradient }} />
             )}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/15" />
-
-            {/* sticker overlay */}
-            <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur text-white text-[10px] tracking-wider">
-              P{current.index + 1} · {roleLabel(current.role)}
-            </div>
-
-            <div className="absolute inset-x-3 bottom-3 text-white">
-              {current.role === "cover" ? (
-                <>
-                  <div className="text-[10px] uppercase tracking-[0.22em] opacity-85">{style.english}</div>
-                  <div className="mt-1 text-2xl font-extrabold leading-tight drop-shadow-md">
-                    {note.title.split("｜")[0]}
-                  </div>
-                  <div className="mt-1 text-xs opacity-90">{note.coverSubline}</div>
-                </>
-              ) : (
-                <>
-                  <div className="text-base font-bold leading-tight drop-shadow">{current.headline}</div>
-                  <div className="mt-1 text-[11px] opacity-90 line-clamp-3">{current.caption}</div>
-                </>
-              )}
-            </div>
+            {current.role !== "cover" && <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-transparent" />}
 
             {/* prev / next dots */}
             <div className="absolute inset-x-0 bottom-1 flex justify-center gap-1">
@@ -532,6 +490,67 @@ function PhonePreview({
         >
           <ChevronRight className="size-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+function CoverArt({
+  note,
+  styleName,
+  current,
+  imageUrls,
+}: {
+  note: GeneratedNote;
+  styleName: string;
+  current: GeneratedNote["pageLayout"][number];
+  imageUrls: string[];
+}) {
+  const titleMain = note.title.split("｜")[0] || note.coverHeadline;
+  const [primary, secondary, tertiary] = imageUrls;
+  return (
+    <div className="absolute inset-0 overflow-hidden" style={{ background: current.gradient }} data-testid="cover-art">
+      <div className="absolute inset-0 bg-[#f5d8c8]" />
+      <div className="absolute inset-2 rounded-[1.4rem] bg-[#b7c7dd] shadow-inner overflow-hidden">
+        {primary ? (
+          <img src={primary} alt="" className="absolute inset-0 size-full object-cover scale-105" />
+        ) : (
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_30%,#e9f2ff_0,#88a9d2_38%,#4d6f9a_100%)]" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/35" />
+        <div className="absolute left-3 top-3 flex gap-1">
+          <span className="size-2 rounded-full bg-yellow-300 shadow" />
+          <span className="size-2 rounded-full bg-orange-400 shadow" />
+        </div>
+        <div className="absolute right-3 top-3 rounded-full bg-white/30 px-2 py-0.5 text-[9px] font-bold text-white backdrop-blur">
+          NoteStay
+        </div>
+        <div className="absolute inset-x-4 top-10 text-center">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-white/85">{styleName}</div>
+          <div className="mt-2 whitespace-pre-line text-[30px] font-black leading-[0.95] tracking-tight text-white drop-shadow-[0_3px_8px_rgba(0,0,0,.35)]">
+            {titleMain}
+          </div>
+        </div>
+        <div className="absolute inset-x-4 bottom-16 grid grid-cols-2 gap-2">
+          <div className="aspect-[3/4] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg">
+            {secondary ? (
+              <img src={secondary} alt="" className="size-full rounded-lg object-cover" />
+            ) : (
+              <div className="size-full rounded-lg bg-white/45" />
+            )}
+          </div>
+          <div className="aspect-[3/4] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg translate-y-4">
+            {tertiary ? (
+              <img src={tertiary} alt="" className="size-full rounded-lg object-cover" />
+            ) : (
+              <div className="size-full rounded-lg bg-white/35" />
+            )}
+          </div>
+        </div>
+        <div className="absolute inset-x-4 bottom-5 flex items-center justify-between rounded-2xl bg-white/25 px-3 py-2 text-[10px] font-semibold text-white backdrop-blur">
+          <span>{note.coverSubline}</span>
+          <span>收藏攻略</span>
+        </div>
       </div>
     </div>
   );
