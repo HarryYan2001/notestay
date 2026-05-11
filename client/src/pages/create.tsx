@@ -72,7 +72,7 @@ export default function CreatePage() {
       // simulate 3-agent pipeline
       const steps = [
         "内容理解 Agent · 解析素材与心得",
-        "视觉优化 Agent · 排版与封面建议",
+      "视觉优化 Agent · 主图选择、黄金分割裁切与封面建议",
         "互动提升 Agent · 标题、标签与评论引导",
       ];
       for (let i = 0; i < steps.length; i++) {
@@ -481,7 +481,7 @@ function Field({
 function GenerateOverlay({ step }: { step: number }) {
   const steps = [
     { name: "内容理解 Agent", desc: "解析心得 + 实拍 + 酒店信息" },
-    { name: "视觉优化 Agent", desc: "封面、内页与排版建议" },
+    { name: "视觉优化 Agent", desc: "按图片类别选主图,用黄金分割优化封面视觉重点" },
     { name: "互动提升 Agent", desc: "标题、标签与评论引导" },
   ];
   return (

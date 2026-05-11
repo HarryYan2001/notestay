@@ -44,6 +44,24 @@ function categorizeImages(images: UploadedImage[]): Record<string, UploadedImage
   return map;
 }
 
+function selectCoverImage(images: UploadedImage[]): UploadedImage | undefined {
+  const priority = ["房间", "外观", "大堂", "夜景", "早餐", "床品", "浴室", "周边", "其他"];
+  return priority.map((category) => images.find((img) => img.category === category)).find(Boolean) || images[0];
+}
+
+function polishUserLine(text: string, seed: number): string {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+  if (!cleaned) return cleaned;
+  const openings = [
+    "真实入住下来,最明显的感受是",
+    "从我的实拍和体验看,比较值得记录的是",
+    "这部分不夸张,我会这样概括:",
+    "如果要写给正在做功课的人,重点是",
+  ];
+  const ending = cleaned.endsWith("。") || cleaned.endsWith("!") || cleaned.endsWith("！") ? "" : "。";
+  return `${pick(openings, seed)}${cleaned.length > 42 ? " " : ":"}${cleaned}${ending}`;
+}
+
 export function generateNote(input: AppInputState): GeneratedNote {
   const style = STYLES[input.style];
   const warnings: string[] = [];
@@ -108,7 +126,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const emoji = style.emojiSet;
 
   const intro: string[] = [];
-  intro.push(`${emoji[0]} 这次入住${subject},整体感受可以用一个词形容: ${tone}。`);
+  intro.push(`${emoji[0]} 这次入住${subject},整体感受可以用一个词形容: ${tone}。这篇会尽量按真实体验来写,不补不存在的信息。`);
   if (city || stayDate) {
     const parts: string[] = [];
     if (city) parts.push(`坐标 ${city}`);
@@ -120,8 +138,9 @@ export function generateNote(input: AppInputState): GeneratedNote {
 
   const sceneBlocks: string[] = [];
   if (input.inputMode === "framework") {
-    for (const b of frameworkBlocks) {
-      sceneBlocks.push(`【${b.label}】\n${b.value}`);
+    for (let i = 0; i < frameworkBlocks.length; i++) {
+      const b = frameworkBlocks[i];
+      sceneBlocks.push(`【${b.label}】\n${polishUserLine(b.value, seed + i)}`);
     }
   } else if (freeText) {
     // Slightly polish free-form text into 2-3 paragraphs by splitting on punctuation / newlines.
@@ -142,7 +161,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     if (buf.length) grouped.push(buf.join(""));
     grouped.forEach((g, i) => {
       const label = ["入住感受", "空间细节", "服务体验", "周边体验"][i] || "其他记录";
-      sceneBlocks.push(`【${label}】\n${g}`);
+      sceneBlocks.push(`【${label}】\n${polishUserLine(g, seed + i)}`);
     });
   }
 
@@ -193,6 +212,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   // 6) Page layout (cover + image-only inner pages)
   const byCat = categorizeImages(input.images);
   const orderedCategories = IMAGE_CATEGORIES.filter((c) => byCat[c].length > 0);
+  const coverImage = selectCoverImage(input.images);
   const layout: PageLayout[] = [];
 
   layout.push({
@@ -200,7 +220,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     role: "cover",
     headline: coverHeadline,
     caption: title,
-    imageId: input.images[0]?.id,
+    imageId: coverImage?.id,
     gradient: gradientFor(input.style, 0),
   });
 

@@ -24,6 +24,8 @@ export default function ResultPage() {
   const [, navigate] = useLocation();
   const [copied, setCopied] = useState<string | null>(null);
   const [pageIdx, setPageIdx] = useState(0);
+  const [coverTextOffset, setCoverTextOffset] = useState({ x: 0, y: 0 });
+  const [coverZoom, setCoverZoom] = useState(1.08);
   const imageMap = useImageMap();
 
   // If no generated note yet, redirect back to create
@@ -148,10 +150,47 @@ export default function ResultPage() {
               onPrev={() => setPageIdx((i) => Math.max(0, i - 1))}
               onNext={() => setPageIdx((i) => Math.min(note.pageLayout.length - 1, i + 1))}
               imageMap={imageMap}
+              coverTextOffset={coverTextOffset}
+              onCoverTextOffsetChange={setCoverTextOffset}
+              coverZoom={coverZoom}
             />
             <p className="mt-3 text-xs text-muted-foreground text-center">
-              手机端预览 · 模拟小红书笔记翻页,所见即所得
+              手机端预览 · 封面标题可拖拽,所见即所得
             </p>
+            <div className="mt-3 rounded-2xl border border-card-border bg-card/70 p-3 text-xs" data-testid="cover-editor-panel">
+              <div className="font-semibold text-foreground">封面编辑器</div>
+              <div className="mt-1 text-muted-foreground">拖动封面大标题调整位置;主图默认按黄金分割安全区裁切。</div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-border px-3 py-1 hover-elevate"
+                  onClick={() => setCoverZoom((z) => Math.max(1, Number((z - 0.04).toFixed(2))))}
+                  data-testid="button-cover-zoom-out"
+                >
+                  缩小主图
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-border px-3 py-1 hover-elevate"
+                  onClick={() => setCoverZoom((z) => Math.min(1.3, Number((z + 0.04).toFixed(2))))}
+                  data-testid="button-cover-zoom-in"
+                >
+                  放大主图
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full bg-foreground px-3 py-1 text-background hover:opacity-90"
+                  onClick={() => {
+                    setCoverTextOffset({ x: 0, y: 0 });
+                    setCoverZoom(1.08);
+                    setPageIdx(0);
+                  }}
+                  data-testid="button-cover-reset"
+                >
+                  重置封面
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* RIGHT: content blocks */}
@@ -398,12 +437,18 @@ function PhonePreview({
   onPrev,
   onNext,
   imageMap,
+  coverTextOffset,
+  onCoverTextOffsetChange,
+  coverZoom,
 }: {
   note: GeneratedNote;
   pageIdx: number;
   onPrev: () => void;
   onNext: () => void;
   imageMap: Record<string, string>;
+  coverTextOffset: { x: number; y: number };
+  onCoverTextOffsetChange: (offset: { x: number; y: number }) => void;
+  coverZoom: number;
 }) {
   const current = note.pageLayout[pageIdx] ?? note.pageLayout[0];
   const style = STYLES[note.styleKey];
@@ -420,7 +465,15 @@ function PhonePreview({
           {/* image / cover area */}
           <div className="relative aspect-[3/4]">
             {current.role === "cover" ? (
-              <CoverArt note={note} styleName={style.english} current={current} imageUrls={Object.values(imageMap)} />
+              <CoverArt
+                note={note}
+                styleName={style.english}
+                current={current}
+                imageUrls={Object.values(imageMap)}
+                textOffset={coverTextOffset}
+                onTextOffsetChange={onCoverTextOffsetChange}
+                zoom={coverZoom}
+              />
             ) : current.imageId && imageMap[current.imageId] ? (
               <img src={imageMap[current.imageId]} alt="" className="absolute inset-0 size-full object-cover" />
             ) : (
@@ -500,24 +553,57 @@ function CoverArt({
   styleName,
   current,
   imageUrls,
+  textOffset,
+  onTextOffsetChange,
+  zoom,
 }: {
   note: GeneratedNote;
   styleName: string;
   current: GeneratedNote["pageLayout"][number];
   imageUrls: string[];
+  textOffset: { x: number; y: number };
+  onTextOffsetChange: (offset: { x: number; y: number }) => void;
+  zoom: number;
 }) {
   const titleMain = note.title.split("｜")[0] || note.coverHeadline;
   const [primary, secondary, tertiary] = imageUrls;
+  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY, ox: textOffset.x, oy: textOffset.y };
+    const move = (ev: PointerEvent) => {
+      onTextOffsetChange({
+        x: Math.max(-34, Math.min(34, start.ox + ev.clientX - start.x)),
+        y: Math.max(-40, Math.min(62, start.oy + ev.clientY - start.y)),
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: current.gradient }} data-testid="cover-art">
-      <div className="absolute inset-0 bg-[#f5d8c8]" />
+      <div className="absolute inset-0 bg-[#f6efe7]" />
       <div className="absolute inset-2 rounded-[1.4rem] bg-[#b7c7dd] shadow-inner overflow-hidden">
         {primary ? (
-          <img src={primary} alt="" className="absolute inset-0 size-full object-cover scale-105" />
+          <img
+            src={primary}
+            alt=""
+            className="absolute inset-0 size-full object-cover"
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: "38.2% 38.2%",
+              objectPosition: "38% 42%",
+            }}
+          />
         ) : (
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_30%,#e9f2ff_0,#88a9d2_38%,#4d6f9a_100%)]" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/35" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/22 via-transparent to-black/42" />
+        <div className="absolute left-[38.2%] top-0 h-full w-px bg-white/15" />
+        <div className="absolute left-0 top-[38.2%] h-px w-full bg-white/15" />
         <div className="absolute left-3 top-3 flex gap-1">
           <span className="size-2 rounded-full bg-yellow-300 shadow" />
           <span className="size-2 rounded-full bg-orange-400 shadow" />
@@ -525,23 +611,31 @@ function CoverArt({
         <div className="absolute right-3 top-3 rounded-full bg-white/30 px-2 py-0.5 text-[9px] font-bold text-white backdrop-blur">
           NoteStay
         </div>
-        <div className="absolute inset-x-4 top-10 text-center">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-white/85">{styleName}</div>
-          <div className="mt-2 whitespace-pre-line text-[30px] font-black leading-[0.95] tracking-tight text-white drop-shadow-[0_3px_8px_rgba(0,0,0,.35)]">
+        <div
+          className="absolute inset-x-4 top-[14%] cursor-grab select-none rounded-2xl p-1 text-center active:cursor-grabbing"
+          data-testid="draggable-cover-title"
+          onPointerDown={startDrag}
+          style={{ transform: `translate(${textOffset.x}px, ${textOffset.y}px)` }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.2em] text-white/85 drop-shadow">{styleName}</div>
+          <div className="mt-2 whitespace-pre-line text-[30px] font-black leading-[0.95] tracking-tight text-white drop-shadow-[0_4px_10px_rgba(0,0,0,.46)]">
             {titleMain}
           </div>
+          <div className="mx-auto mt-2 w-fit rounded-full bg-black/28 px-2 py-1 text-[9px] font-bold text-white/90 backdrop-blur">
+            拖动我调整封面标题
+          </div>
         </div>
-        <div className="absolute inset-x-4 bottom-16 grid grid-cols-2 gap-2">
-          <div className="aspect-[3/4] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg">
+        <div className="absolute left-[7%] right-[7%] bottom-[19%] grid grid-cols-[1fr_.82fr] gap-2">
+          <div className="aspect-[.72/1] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg">
             {secondary ? (
-              <img src={secondary} alt="" className="size-full rounded-lg object-cover" />
+              <img src={secondary} alt="" className="size-full rounded-lg object-cover" style={{ objectPosition: "38% 50%" }} />
             ) : (
               <div className="size-full rounded-lg bg-white/45" />
             )}
           </div>
-          <div className="aspect-[3/4] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg translate-y-4">
+          <div className="aspect-[.72/1] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg translate-y-6">
             {tertiary ? (
-              <img src={tertiary} alt="" className="size-full rounded-lg object-cover" />
+              <img src={tertiary} alt="" className="size-full rounded-lg object-cover" style={{ objectPosition: "62% 45%" }} />
             ) : (
               <div className="size-full rounded-lg bg-white/35" />
             )}
