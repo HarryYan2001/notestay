@@ -98,6 +98,34 @@ const TONE_LABELS: Record<TextTone, string> = {
 export const TEXT_CUE_LABELS = CUE_LABELS;
 export const TEXT_TONE_LABELS = TONE_LABELS;
 
+// ---------- imitation strength ----------
+
+// Public label set + ordering for the segmented control in create.tsx. The
+// generator and decorators receive a `TextStyleStrength` directly; these are
+// only here so UI code has a single source of truth.
+export type TextStyleStrength = "light" | "medium" | "high";
+
+export const TEXT_STYLE_STRENGTH_LEVELS: TextStyleStrength[] = ["light", "medium", "high"];
+
+export const TEXT_STYLE_STRENGTH_LABELS: Record<TextStyleStrength, string> = {
+  light: "轻度",
+  medium: "中度",
+  high: "高度",
+};
+
+export const TEXT_STYLE_STRENGTH_DESCRIPTIONS: Record<TextStyleStrength, string> = {
+  light: "只学习语气和标题节奏，保留 NoteStay 原生成框架更多",
+  medium: "平衡参考风格与你的素材，默认推荐",
+  high: "更强地模仿标题节奏、emoji 密度、口吻与 CTA，不复制原文",
+};
+
+export const DEFAULT_TEXT_STYLE_STRENGTH: TextStyleStrength = "medium";
+
+export function normalizeTextStyleStrength(s: string | null | undefined): TextStyleStrength {
+  if (s === "light" || s === "medium" || s === "high") return s;
+  return DEFAULT_TEXT_STYLE_STRENGTH;
+}
+
 // ---------- keyword banks ----------
 
 const STRONG_EMOJI = new Set([
@@ -374,42 +402,68 @@ function stringHash(s: string): number {
 }
 
 // Bend the generated title toward the learned text-tone WITHOUT copying any
-// of the original phrasing. Pure / deterministic on (base, profile).
-export function applyTextStyleToTitle(base: string, p: ScreenshotTextStyleProfile): string {
+// of the original phrasing. Pure / deterministic on (base, profile, strength).
+//
+// Strength scaling:
+//   - light:  no punctuation burst, no emoji append, no register suffix; only
+//             the playful terminal-particle swap survives because it is a
+//             single-character cosmetic change that doesn't alter framing.
+//   - medium: PR #23 behavior — punctuation burst + at most one strong emoji
+//             for dramatic; register suffix for healing/premium.
+//   - high:   adds a second strong emoji for dramatic, doubles the register
+//             suffix to a stronger phrase for healing/premium, and forces a
+//             playful particle swap even on titles without a trailing 。.
+export function applyTextStyleToTitle(
+  base: string,
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength = DEFAULT_TEXT_STYLE_STRENGTH,
+): string {
   if (!p.hasText) return base;
   let out = base.trim();
   if (!out) return out;
 
-  // Drama: ensure at least !! and (optionally) one strong emoji from the
-  // learned pool. Never add more than one emoji and never duplicate.
   if (p.tone === "dramatic") {
-    if (p.punctIntensity >= 1 && !/[!！?？]{2,}/.test(out)) {
+    if (strength !== "light" && p.punctIntensity >= 1 && !/[!！?？]{2,}/.test(out)) {
       const wantsQuestion =
         p.cues.includes("question_burst") && !p.cues.includes("exclamation_burst");
-      const mark = wantsQuestion ? "？？" : "!!";
+      const baseMark = wantsQuestion ? "？？" : "!!";
+      // High strength leans harder on the punctuation burst.
+      const mark = strength === "high" ? (wantsQuestion ? "？？？" : "!!!") : baseMark;
       if (/[!！?？]$/.test(out)) out = out.slice(0, -1) + mark;
       else out = `${out}${mark}`;
     }
     const tail = p.detectedEmoji.filter((e) => STRONG_EMOJI.has(e));
-    if (tail.length > 0 && !tail.some((e) => out.includes(e))) {
+    if (strength !== "light" && tail.length > 0 && !tail.some((e) => out.includes(e))) {
       const idx = stringHash(out) % tail.length;
       out = `${out}${tail[idx]}`;
+      // High strength may stack a second distinct strong emoji.
+      if (strength === "high" && tail.length > 1) {
+        const second = tail[(idx + 1) % tail.length];
+        if (second !== tail[idx]) out = `${out}${second}`;
+      }
     }
   }
 
-  // Healing: append a soft register token if not already present.
   if (p.tone === "healing" && !/(治愈|超治愈|温柔|轻轻|柔软|奶系)/.test(out)) {
-    out = `${out}·好治愈`;
+    if (strength === "high") out = `${out}·超治愈奶系感`;
+    else if (strength === "medium") out = `${out}·好治愈`;
+    // light: leave the title alone — only opening will hint at healing.
   }
 
-  // Premium: append a 高级 / 沉静 token if not already present.
   if (p.tone === "premium" && !/(高级|沉静|质感|低调|不动声色|讲究)/.test(out)) {
-    out = `${out}·有质感`;
+    if (strength === "high") out = `${out}·不动声色的高级感`;
+    else if (strength === "medium") out = `${out}·有质感`;
+    // light: leave the title alone.
   }
 
-  // Playful: terminal particle swap. Only nudge a 。-ending title to 啦.
-  if (p.tone === "playful" && /。$/.test(out)) {
-    out = out.replace(/。$/, "啦");
+  if (p.tone === "playful") {
+    if (/。$/.test(out)) {
+      // All strengths swap a terminal 。 → 啦 — it's a one-character cosmetic
+      // touch, not aggressive framing.
+      out = out.replace(/。$/, "啦");
+    } else if (strength === "high" && !/[啦呀鸭哒嘛]$/.test(out) && !/[!！?？]$/.test(out)) {
+      out = `${out}啦`;
+    }
   }
   return out;
 }
@@ -417,21 +471,49 @@ export function applyTextStyleToTitle(base: string, p: ScreenshotTextStyleProfil
 // Decorate the body opening line based on the learned tone & cues. Same
 // guarantees as the title decorator: deterministic, no verbatim copy of any
 // reference phrasing, never alters the user's actual section content.
-export function applyTextStyleToBodyOpening(opening: string, p: ScreenshotTextStyleProfile): string {
+//
+// Strength scaling:
+//   - light:  skip the vocative prepend entirely and skip strong tone
+//             rewrites; only soft swaps (playful 。→啦~) survive. The hook
+//             keeps NoteStay's native voice while letting the title still
+//             carry a tone hint.
+//   - medium: PR #23 behavior — vocative + tone-specific opener rewrite.
+//   - high:   adds a stronger vocative phrase ("姐妹们听我说，") and pushes
+//             the dramatic opener to a heavier !!! tail.
+export function applyTextStyleToBodyOpening(
+  opening: string,
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength = DEFAULT_TEXT_STYLE_STRENGTH,
+): string {
   if (!p.hasText) return opening;
   let out = opening;
-  if (p.cues.includes("vocative_opener") && !/^(姐妹|宝子|家人们|兄弟们|uu们|集美)/.test(out)) {
+  if (
+    strength !== "light" &&
+    p.cues.includes("vocative_opener") &&
+    !/^(姐妹|宝子|家人们|兄弟们|uu们|集美)/.test(out)
+  ) {
     // Pick a stable vocative from a fixed pool (not from the OCR text — we
     // never echo the source). Hash on the opening to stay deterministic.
     const pool = ["姐妹们", "宝子们", "家人们"];
-    out = `${pool[stringHash(out) % pool.length]}，${out}`;
+    const head = pool[stringHash(out) % pool.length];
+    out = strength === "high" ? `${head}听我说，${out}` : `${head}，${out}`;
+  }
+  if (strength === "light") {
+    // Light only does the cheapest cosmetic playful swap.
+    if (p.tone === "playful" && /。$/.test(out)) {
+      out = out.replace(/。$/, "啦~");
+    }
+    return out;
   }
   if (p.tone === "dramatic" && !/[!！]{2,}/.test(out)) {
-    out = out.replace(/[。!！]?$/, "!!");
+    const tail = strength === "high" ? "!!!" : "!!";
+    out = out.replace(/[。!！]?$/, tail);
   } else if (p.tone === "healing" && !/^(悄悄说|轻轻地|慢慢地)/.test(out)) {
-    out = `悄悄说一句，${out}`;
+    out = strength === "high" ? `轻轻地讲，悄悄说一句，${out}` : `悄悄说一句，${out}`;
   } else if (p.tone === "premium" && !/^(夜色|安静|不动声色|沉静地)/.test(out)) {
-    out = `不动声色地讲一句，${out}`;
+    out = strength === "high"
+      ? `不动声色地讲一句，沉静地说，${out}`
+      : `不动声色地讲一句，${out}`;
   } else if (p.tone === "playful" && /。$/.test(out)) {
     out = out.replace(/。$/, "啦~");
   }
@@ -441,19 +523,44 @@ export function applyTextStyleToBodyOpening(opening: string, p: ScreenshotTextSt
 // Decorate the closing line if the reference has strong CTA cues. We never
 // copy the exact reference CTA; we pick from a fixed bank of generic ones
 // that match the cue family.
-export function applyTextStyleToClosing(closing: string, p: ScreenshotTextStyleProfile): string {
-  if (!p.hasText) return closing;
+//
+// Strength scaling:
+//   - light:  no CTA hook is appended — the user's natural closing stays.
+//   - medium: PR #23 behavior — append one CTA hook tied to the cue family.
+//   - high:   append a longer, more emphatic CTA phrase; when both collect
+//             AND comment cues fired, stack both hooks.
+export function applyTextStyleToClosing(
+  closing: string,
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength = DEFAULT_TEXT_STYLE_STRENGTH,
+): string {
+  if (!p.hasText || strength === "light") return closing;
   let out = closing;
-  if (p.cues.includes("cta_collect") && !/(收藏|抄作业|码住|存起来|存一下)/.test(out)) {
-    out = `${out.replace(/[。！？]$/, "")}，记得先码住再说。`;
-  } else if (p.cues.includes("cta_comment") && !/(蹲|评论区|想问|有没有)/.test(out)) {
-    out = `${out.replace(/[。！？]$/, "")}，评论区蹲一个同款入住的姐妹。`;
+  const hasCollect = p.cues.includes("cta_collect");
+  const hasComment = p.cues.includes("cta_comment");
+  const stripTail = (s: string) => s.replace(/[。！？]$/, "");
+  if (hasCollect && !/(收藏|抄作业|码住|存起来|存一下)/.test(out)) {
+    out = strength === "high"
+      ? `${stripTail(out)}，看到这条记得先码住再说，下次想出片就直接抄作业。`
+      : `${stripTail(out)}，记得先码住再说。`;
+  }
+  if (hasComment && !/(蹲|评论区|想问|有没有)/.test(out)) {
+    if (strength === "high") {
+      out = `${stripTail(out)}，评论区蹲一个同款入住的姐妹，有想问的也尽管来戳我。`;
+    } else if (!hasCollect) {
+      // medium: only one CTA hook total — don't stack with the collect hook.
+      out = `${stripTail(out)}，评论区蹲一个同款入住的姐妹。`;
+    }
   }
   return out;
 }
 
-export function textStyleWarningMessage(p: ScreenshotTextStyleProfile): string | null {
+export function textStyleWarningMessage(
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength = DEFAULT_TEXT_STYLE_STRENGTH,
+): string | null {
   if (!p.hasText) return null;
   const tone = TONE_LABELS[p.tone];
-  return `已学习参考截图文字风格（${tone}）：本次生成的标题、正文与结尾会沿用此节奏与语感，但不会复制原文。`;
+  const strengthLabel = TEXT_STYLE_STRENGTH_LABELS[strength];
+  return `已学习参考截图文字风格（${tone}·${strengthLabel}模仿）：本次生成的标题、正文与结尾会沿用此节奏与语感，但不会复制原文。`;
 }

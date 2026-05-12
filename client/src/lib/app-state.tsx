@@ -15,6 +15,7 @@ import type {
   InputMode,
   ScreenshotRef,
   StyleKey,
+  TextStyleStrength,
   UploadedImage,
 } from "./types";
 import {
@@ -53,6 +54,7 @@ export const DEFAULT_INPUT: AppInputState = {
   viralRef: "",
   viralRefNotes: "",
   screenshotRef: null,
+  textStyleStrength: "medium",
 };
 
 interface AppCtx {
@@ -75,6 +77,8 @@ interface AppCtx {
   // reference-note screenshot. The previous object URL (if any) is revoked
   // automatically so we don't leak memory between uploads.
   setScreenshotRef: (s: ScreenshotRef | null) => void;
+  // Adjust how aggressively the OCR-learned text style is imitated.
+  setTextStyleStrength: (s: TextStyleStrength) => void;
   generated: GeneratedNote | null;
   setGenerated: (g: GeneratedNote | null) => void;
   // User-saved framework templates. Persisted to the URL alongside the
@@ -187,6 +191,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           }
           return { ...s, screenshotRef: ref };
         }),
+      setTextStyleStrength: (strength) =>
+        setState((s) => ({ ...s, textStyleStrength: strength })),
       generated,
       setGenerated,
       templates,

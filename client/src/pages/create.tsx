@@ -16,11 +16,21 @@ import {
 } from "@/lib/screenshot-style";
 import {
   analyzeScreenshotText,
+  DEFAULT_TEXT_STYLE_STRENGTH,
   TEXT_CUE_LABELS,
+  TEXT_STYLE_STRENGTH_DESCRIPTIONS,
+  TEXT_STYLE_STRENGTH_LABELS,
+  TEXT_STYLE_STRENGTH_LEVELS,
   TEXT_TONE_LABELS,
 } from "@/lib/screenshot-text-style";
 import { recognizeScreenshotText } from "@/lib/screenshot-ocr";
-import type { InputMode, ScreenshotRef, ScreenshotTextStyleRef, UploadedImage } from "@/lib/types";
+import type {
+  InputMode,
+  ScreenshotRef,
+  ScreenshotTextStyleRef,
+  TextStyleStrength,
+  UploadedImage,
+} from "@/lib/types";
 import {
   Plus,
   Trash2,
@@ -575,6 +585,10 @@ export default function CreatePage() {
                   onClear={clearScreenshot}
                   busy={analyzingScreenshot}
                   ocrRunning={ocrRunning}
+                  textStyleStrength={
+                    app.state.textStyleStrength ?? DEFAULT_TEXT_STYLE_STRENGTH
+                  }
+                  onChangeTextStyleStrength={app.setTextStyleStrength}
                 />
               )}
               {screenshotError && (
@@ -786,12 +800,16 @@ function ScreenshotPanel({
   onClear,
   busy,
   ocrRunning,
+  textStyleStrength,
+  onChangeTextStyleStrength,
 }: {
   refData: ScreenshotRef;
   onReplace: () => void;
   onClear: () => void;
   busy: boolean;
   ocrRunning: boolean;
+  textStyleStrength: TextStyleStrength;
+  onChangeTextStyleStrength: (s: TextStyleStrength) => void;
 }) {
   const [showOcrText, setShowOcrText] = useState(false);
   const moodLabel =
@@ -979,6 +997,60 @@ function ScreenshotPanel({
                 </p>
               </div>
             )}
+          </div>
+        )}
+        {/* 文字风格模仿强度. Only render once OCR successfully learned a text
+            style — for empty / failed OCR there is nothing to bend. The
+            control sits inside React state for this flow only, no storage. */}
+        {!ocrRunning && textStyle?.hasText && (
+          <div
+            className="pt-1 space-y-1.5"
+            data-testid="screenshot-text-strength-control"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                文字风格模仿强度
+              </span>
+              <span
+                className="text-[10px] text-muted-foreground"
+                data-testid="screenshot-text-strength-current"
+              >
+                当前：{TEXT_STYLE_STRENGTH_LABELS[textStyleStrength]}
+              </span>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="文字风格模仿强度"
+              className="inline-flex w-full rounded-full border border-card-border bg-card/70 p-0.5"
+            >
+              {TEXT_STYLE_STRENGTH_LEVELS.map((level) => {
+                const active = level === textStyleStrength;
+                return (
+                  <button
+                    key={level}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => onChangeTextStyleStrength(level)}
+                    className={`flex-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                      active
+                        ? "bg-foreground text-background shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid={`button-text-strength-${level}`}
+                    aria-label={`${TEXT_STYLE_STRENGTH_LABELS[level]}：${TEXT_STYLE_STRENGTH_DESCRIPTIONS[level]}`}
+                  >
+                    {TEXT_STYLE_STRENGTH_LABELS[level]}
+                  </button>
+                );
+              })}
+            </div>
+            <p
+              className="text-[10px] text-muted-foreground leading-relaxed"
+              data-testid="screenshot-text-strength-description"
+            >
+              {TEXT_STYLE_STRENGTH_DESCRIPTIONS[textStyleStrength]}
+            </p>
           </div>
         )}
       </div>

@@ -36,7 +36,9 @@ import {
   applyTextStyleToClosing,
   applyTextStyleToTitle,
   emptyTextProfile,
+  normalizeTextStyleStrength,
   TEXT_CUE_LABELS,
+  TEXT_STYLE_STRENGTH_LABELS,
   TEXT_TONE_LABELS,
   textStyleWarningMessage,
   type ScreenshotTextStyleProfile,
@@ -219,10 +221,14 @@ export function generateNote(input: AppInputState): GeneratedNote {
         status: input.screenshotRef.textStyle.status,
       }
     : emptyTextProfile();
-  const textWarning = textStyleWarningMessage(textProfile);
+  // Imitation strength for the OCR-learned text style. Defaults to "medium"
+  // (PR #23 behavior) when the input state doesn't pin a value — preserves
+  // back-compat with existing smoke fixtures and external callers.
+  const textStrength = normalizeTextStyleStrength(input.textStyleStrength);
+  const textWarning = textStyleWarningMessage(textProfile, textStrength);
   if (textWarning) warnings.push(textWarning);
 
-  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.mood ?? ""}|${(input.screenshotRef?.cues ?? []).join(",")}|${input.screenshotRef?.textStyle?.tone ?? ""}|${(input.screenshotRef?.textStyle?.cues ?? []).join(",")}|${Date.now()}|${Math.random()}`;
+  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.mood ?? ""}|${(input.screenshotRef?.cues ?? []).join(",")}|${input.screenshotRef?.textStyle?.tone ?? ""}|${(input.screenshotRef?.textStyle?.cues ?? []).join(",")}|${textStrength}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
 
   // 2) Title
@@ -245,6 +251,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
       screenshotProfile,
     ),
     textProfile,
+    textStrength,
   );
   const coverHeadlines = [
     `${subject}\n真的很会住!`,
@@ -262,6 +269,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     applyTextStyleToTitle(
       applyScreenshotTitleStyle(applyTitleStyle(t, viralProfile), screenshotProfile),
       textProfile,
+      textStrength,
     ),
   );
 
@@ -691,6 +699,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
       screenshotProfile,
     ),
     textProfile,
+    textStrength,
   );
 
   // Optional context line (city / stay date / room type) — only if provided.
@@ -717,6 +726,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const closing = applyTextStyleToClosing(
     stripBanned(pick(closingBank, seed + 41)),
     textProfile,
+    textStrength,
   );
 
   // Compose body. Drop sections one by one if we exceed 600 CJK chars.
@@ -908,6 +918,8 @@ export function generateNote(input: AppInputState): GeneratedNote {
         cues: textProfile.cues,
         cueLabels: textProfile.cues.map((c) => TEXT_CUE_LABELS[c]),
         status: textProfile.status,
+        strength: textStrength,
+        strengthLabel: TEXT_STYLE_STRENGTH_LABELS[textStrength],
       },
     },
   };

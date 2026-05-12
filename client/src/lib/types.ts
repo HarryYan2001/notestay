@@ -50,6 +50,14 @@ export interface UploadedImage {
 
 export type InputMode = "framework" | "freeform";
 
+// Imitation strength for the OCR-learned text style of the uploaded target
+// screenshot. Visual / image-style learning is independent and unaffected.
+//   - "light":  subtle nudges only — keep NoteStay's native voice mostly intact
+//   - "medium": default; balanced reference + user material (PR #23 behavior)
+//   - "high":   stronger mimicry of title rhythm, emoji density, vocative
+//               opener and CTA hooks, but never copies source phrases or facts
+export type TextStyleStrength = "light" | "medium" | "high";
+
 export interface AppInputState {
   inputMode: InputMode;
   framework: FrameworkField[];
@@ -67,6 +75,10 @@ export interface AppInputState {
   // bend title, body opening and page/cover designs toward the learned
   // palette + mood + cues. Null when the user hasn't uploaded a screenshot.
   screenshotRef: ScreenshotRef | null;
+  // How aggressively to imitate the OCR-learned text style. Defaults to
+  // "medium" so existing flows and smoke fixtures keep their PR #23 behavior.
+  // Lives only in React state for the current flow — no browser storage.
+  textStyleStrength?: TextStyleStrength;
 }
 
 // Persisted screenshot reference. We only keep the *analysis result* in app
@@ -244,6 +256,10 @@ export interface ScreenshotTextStyleSummary {
   cues: string[];
   cueLabels: string[];
   status: string;
+  // Strength that was actually applied during generation (light / medium /
+  // high). Defaults to "medium" when the input state didn't specify one.
+  strength: TextStyleStrength;
+  strengthLabel: string;
 }
 
 export interface PageLayout {
