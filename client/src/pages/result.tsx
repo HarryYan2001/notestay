@@ -330,29 +330,43 @@ export default function ResultPage() {
             <Block
               title="标题备选 & 文案复制"
               testId="block-text-actions"
-              subtitle="标题与正文请直接在左侧手机预览中编辑;此处提供备选标题与一键复制。"
+              subtitle="标题与正文请直接在左侧手机预览中编辑;此处提供当前标题与备选标题,可一键复用。"
             >
               <div className="space-y-2">
-                {note.altTitles.map((t, i) => (
-                  <div
-                    key={i}
-                    className="text-sm text-muted-foreground flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-1.5"
-                    data-testid={`text-alt-title-${i}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] uppercase tracking-wider">备选 {i + 1}</span>
-                      <span>{t}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => updateNote({ title: t })}
-                      className="text-[11px] rounded-full border border-border px-2 py-0.5 hover-elevate"
-                      data-testid={`button-apply-alt-title-${i}`}
-                    >
-                      用这个
-                    </button>
+                <div
+                  className="text-sm flex items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-1.5"
+                  data-testid="text-current-title"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">当前</span>
+                    <span className="text-foreground">{note.title}</span>
                   </div>
-                ))}
+                  <span className="text-[11px] text-muted-foreground">使用中</span>
+                </div>
+                {note.altTitles.map((t, i) => {
+                  const isCurrent = t === note.title;
+                  return (
+                    <div
+                      key={i}
+                      className="text-sm text-muted-foreground flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-1.5"
+                      data-testid={`text-alt-title-${i}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase tracking-wider">备选 {i + 1}</span>
+                        <span>{t}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => updateNote({ title: t })}
+                        disabled={isCurrent}
+                        className="text-[11px] rounded-full border border-border px-2 py-0.5 hover-elevate disabled:opacity-50 disabled:cursor-not-allowed"
+                        data-testid={`button-apply-alt-title-${i}`}
+                      >
+                        {isCurrent ? "已使用" : "用这个"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <CopyBtn
