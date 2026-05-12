@@ -262,6 +262,16 @@ export default function ResultPage() {
               <p className="text-xs text-muted-foreground text-center">
                 左右滑动图片页 · 直接点击标题/正文可编辑 · 贴纸仅显示在所属页面
               </p>
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={regenerate}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-sm hover:opacity-95"
+                  data-testid="button-regenerate-text"
+                >
+                  <Sparkles className="size-4" /> 重新生成文本
+                </button>
+              </div>
             </div>
           </div>
 
@@ -334,53 +344,36 @@ export default function ResultPage() {
                 {(() => {
                   const original = note.originalTitle;
                   const altList = note.altTitles;
-                  const showOriginal = Boolean(original) && !altList.includes(original);
-                  const entries: { key: string; label: string; text: string; testId: string }[] = [];
-                  if (showOriginal) {
-                    entries.push({
-                      key: "original",
-                      label: "初始生成",
-                      text: original,
-                      testId: "text-original-title",
-                    });
-                  }
-                  altList.forEach((t, i) => {
-                    entries.push({
-                      key: `alt-${i}`,
-                      label: `备选 ${i + 1}`,
-                      text: t,
-                      testId: `text-alt-title-${i}`,
-                    });
+                  const titles: string[] = [];
+                  if (original) titles.push(original);
+                  altList.forEach((t) => {
+                    if (!titles.includes(t)) titles.push(t);
                   });
-                  if (entries.length === 0) {
+                  if (titles.length === 0) {
                     return (
                       <p className="text-xs text-muted-foreground" data-testid="text-no-alt-titles">
                         当前没有备选标题。
                       </p>
                     );
                   }
-                  return entries.map((entry, i) => {
-                    const isCurrent = entry.text === note.title;
-                    const applyTestId =
-                      entry.key === "original"
-                        ? "button-apply-original-title"
-                        : `button-apply-alt-title-${i - (showOriginal ? 1 : 0)}`;
+                  return titles.map((text, i) => {
+                    const isCurrent = text === note.title;
                     return (
                       <div
-                        key={entry.key}
+                        key={`alt-${i}`}
                         className="text-sm text-muted-foreground flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-1.5"
-                        data-testid={entry.testId}
+                        data-testid={`text-alt-title-${i}`}
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] uppercase tracking-wider">{entry.label}</span>
-                          <span>{entry.text}</span>
+                          <span className="text-[10px] uppercase tracking-wider">{`备选 ${i + 1}`}</span>
+                          <span>{text}</span>
                         </div>
                         <button
                           type="button"
-                          onClick={() => updateNote({ title: entry.text })}
+                          onClick={() => updateNote({ title: text })}
                           disabled={isCurrent}
                           className="text-[11px] rounded-full border border-border px-2 py-0.5 hover-elevate disabled:opacity-50 disabled:cursor-not-allowed"
-                          data-testid={applyTestId}
+                          data-testid={`button-apply-alt-title-${i}`}
                         >
                           {isCurrent ? "已使用" : "用这个"}
                         </button>
@@ -475,25 +468,6 @@ export default function ResultPage() {
               </ul>
             </Block>
 
-            <div className="flex flex-wrap gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => copy("full", buildFullCopy(note))}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium hover:opacity-95"
-                data-testid="button-copy-all"
-              >
-                {copied === "full" ? <Check className="size-4" /> : <Copy className="size-4" />}
-                一键复制全部内容
-              </button>
-              <button
-                type="button"
-                onClick={regenerate}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-sm"
-                data-testid="button-regenerate-bottom"
-              >
-                <Sparkles className="size-4" /> 重新生成本风格
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -513,20 +487,6 @@ export default function ResultPage() {
       </div>
     </AppShell>
   );
-}
-
-function buildFullCopy(n: GeneratedNote) {
-  return [
-    n.title,
-    "",
-    n.body,
-    "",
-    n.tags.join(" "),
-    "",
-    "---",
-    "评论引导:",
-    ...n.commentSeeds,
-  ].join("\n");
 }
 
 function Block({
