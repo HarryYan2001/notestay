@@ -57,7 +57,8 @@ function countCjk(text: string): number {
   for (const p of BANNED) assert(!note.body.includes(p), `body must not contain banned phrase: ${p}`);
   for (const p of FIXED_REMOVED) assert(!note.body.includes(p), `body must not contain removed fixed line: ${p}`);
   assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
-  assert(note.tags.length >= 3 && note.tags.length <= 5, "should have 3-5 hashtags");
+  assert(note.tags.length === 3, "should default to exactly 3 hashtags");
+  for (const t of note.tags) assert(t.startsWith("#"), `tag '${t}' must start with '#'`);
 }
 
 // Case 2: no price — should NOT include a price section at all.

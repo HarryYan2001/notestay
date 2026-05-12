@@ -641,7 +641,8 @@ export function generateNote(input: AppInputState): GeneratedNote {
   }
   body = stripBanned(body);
 
-  // 4) Tags — keep 3-5 most relevant hashtags.
+  // 4) Tags — default to exactly 3 hashtags. Users can add or remove tags
+  // freely in the result-page editor; this is only the initial set.
   const orderedTags: string[] = [];
   const pushTag = (t: string) => {
     const v = `#${t.replace(/^#/, "").trim()}`;
@@ -652,7 +653,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   pushTag("酒店测评");
   pushTag("住宿推荐");
   pushTag(style.name);
-  const tags = orderedTags.slice(0, 5);
+  const tags = orderedTags.slice(0, 3);
 
   // 5) Comment seeds
   const commentSeeds = [
