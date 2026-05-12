@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { useApp } from "@/lib/app-state";
 import { STYLES, STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
-import type { CoverDesign, GeneratedNote, StickerOverlay } from "@/lib/types";
-import { CoverEditor } from "@/components/cover-editor";
+import type { GeneratedNote, PageDesign, StickerOverlay } from "@/lib/types";
+import { PageEditor } from "@/components/page-editor";
+import { PageFlat } from "@/components/page-flat";
 import { PhonePreview } from "@/components/phone-preview";
 import { XhsImport } from "@/components/xhs-import";
+import {
+  elementToPng,
+  exportPagesAsZip,
+  exportPagesSequentially,
+} from "@/lib/export-pages";
 import {
   Copy,
   Check,
@@ -15,12 +21,20 @@ import {
   ChevronLeft,
   AlertTriangle,
   Sparkles,
+  Download,
+  Loader2,
 } from "lucide-react";
+
+const EXPORT_WIDTH = 720; // px (3:4 aspect → 720x960)
 
 export default function ResultPage() {
   const app = useApp();
   const [, navigate] = useLocation();
   const [copied, setCopied] = useState<string | null>(null);
+  const [selectedPageIndex, setSelectedPageIndex] = useState<number>(0);
+  const [exportState, setExportState] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (!app.generated) navigate("/create");
@@ -44,11 +58,18 @@ export default function ResultPage() {
     app.setGenerated({ ...app.generated, ...patch });
   }
 
-  function updateCover(cover: CoverDesign) {
-    updateNote({ cover });
+  function updatePageDesign(index: number, design: PageDesign) {
+    if (!app.generated) return;
+    const pageDesigns = { ...app.generated.pageDesigns, [index]: design };
+    const next: GeneratedNote = {
+      ...app.generated,
+      pageDesigns,
+      cover: index === 0 ? design : app.generated.cover,
+    };
+    app.setGenerated(next);
   }
-  function updateStickers(stickers: StickerOverlay[]) {
-    updateNote({ stickers });
+  function updateStickers(next: StickerOverlay[]) {
+    updateNote({ stickers: next });
   }
 
   function copy(label: string, text: string) {
@@ -61,13 +82,94 @@ export default function ResultPage() {
   function regenerate() {
     const next = generateNote(app.state);
     app.setGenerated(next);
+    setSelectedPageIndex(0);
   }
 
   function switchStyle(key: keyof typeof STYLES) {
     app.setStyle(key);
     const next = generateNote({ ...app.state, style: key });
     app.setGenerated(next);
+    setSelectedPageIndex(0);
   }
+
+  const currentPage =
+    note.pageLayout.find((p) => p.index === selectedPageIndex) || note.pageLayout[0];
+  const currentDesign: PageDesign =
+    note.pageDesigns[currentPage.index] ||
+    note.cover || {
+      background: currentPage.gradient,
+      bgImageUrl: null,
+      layers: [],
+    };
+  const currentStickers = note.stickers.filter((s) => s.pageIndex === currentPage.index);
+
+  async function captureAllPages(): Promise<{ name: string; dataUrl: string }[]> {
+    const results: { name: string; dataUrl: string }[] = [];
+    const exportHeight = Math.round((EXPORT_WIDTH * 4) / 3);
+    // Wait one tick to ensure offscreen frames mounted with current state
+    await new Promise((r) => setTimeout(r, 50));
+    for (const page of note.pageLayout) {
+      const el = exportRefs.current[page.index];
+      if (!el) continue;
+      const dataUrl = await elementToPng(el, EXPORT_WIDTH, exportHeight);
+      results.push({
+        name: `notestay_page_${String(page.index + 1).padStart(2, "0")}.png`,
+        dataUrl,
+      });
+    }
+    return results;
+  }
+
+  async function handleDownloadAll(mode: "zip" | "individual") {
+    setExportError(null);
+    setExportState("running");
+    try {
+      const captures = await captureAllPages();
+      if (captures.length === 0) {
+        throw new Error("没有可导出的页面");
+      }
+      if (mode === "zip") {
+        await exportPagesAsZip(captures, "notestay-pages.zip");
+      } else {
+        await exportPagesSequentially(captures);
+      }
+      setExportState("done");
+      setTimeout(() => setExportState("idle"), 1600);
+    } catch (e: unknown) {
+      setExportError(e instanceof Error ? e.message : "导出失败");
+      setExportState("error");
+    }
+  }
+
+  // Offscreen export frames at full export resolution
+  const exportFrames = useMemo(
+    () =>
+      note.pageLayout.map((page) => {
+        const design =
+          note.pageDesigns[page.index] || {
+            background: page.gradient,
+            bgImageUrl: null,
+            layers: [],
+          };
+        const pageStickers = note.stickers.filter((s) => s.pageIndex === page.index);
+        return (
+          <div
+            key={page.index}
+            ref={(el) => {
+              exportRefs.current[page.index] = el;
+            }}
+            data-testid={`export-frame-${page.index}`}
+          >
+            <PageFlat
+              design={design}
+              stickers={pageStickers}
+              width={EXPORT_WIDTH}
+            />
+          </div>
+        );
+      }),
+    [note.pageLayout, note.pageDesigns, note.stickers],
+  );
 
   return (
     <AppShell>
@@ -140,29 +242,67 @@ export default function ResultPage() {
           </div>
         </div>
 
-        <div className="mt-8 grid lg:grid-cols-12 gap-8">
-          {/* LEFT: phone preview with stickers */}
-          <div className="lg:col-span-5 space-y-4">
-            <PhonePreview
-              note={note}
-              cover={note.cover}
-              stickers={note.stickers}
-              onStickersChange={updateStickers}
-            />
-            <p className="text-xs text-muted-foreground text-center">
-              手机端预览 · 可上下滚动 · 贴纸可在画面上拖拽与编辑
-            </p>
+        <div className="mt-8 grid lg:grid-cols-12 gap-8 items-start">
+          {/* LEFT: sticky phone preview */}
+          <div className="lg:col-span-5">
+            <div className="lg:sticky lg:top-24 space-y-4" data-testid="sticky-preview-pane">
+              <PhonePreview
+                note={note}
+                pageDesigns={note.pageDesigns}
+                stickers={note.stickers}
+                selectedPageIndex={selectedPageIndex}
+                onSelectPage={setSelectedPageIndex}
+                onStickersChange={updateStickers}
+              />
+              <p className="text-xs text-muted-foreground text-center">
+                左右滑动图片页 · 选中的页面可在右侧编辑 · 贴纸仅显示在所属页面
+              </p>
+            </div>
           </div>
 
-          {/* MIDDLE/RIGHT: cover editor + text editors */}
+          {/* RIGHT: page editor + text editors */}
           <div className="lg:col-span-7 space-y-6">
-            <Block title="封面编辑" testId="block-cover-editor" subtitle="拖拽图层移动 · 右下角缩放 · 中心十字裁切 · 可替换/新增/删除">
-              <CoverEditor
-                design={note.cover}
-                onChange={updateCover}
+            <Block
+              title="页面编辑"
+              testId="block-page-editor"
+              subtitle="选中预览中的某一页即可在此编辑该页的图片 / 文字 / 贴纸 · 拖拽移动、圆点旋转、双击图片调整裁切"
+            >
+              <PageEditor
+                page={currentPage}
+                design={currentDesign}
+                stickers={currentStickers}
+                onChangeDesign={(d) => updatePageDesign(currentPage.index, d)}
+                onChangeStickers={(next) => {
+                  // Merge: replace stickers on this page; keep others
+                  const others = note.stickers.filter((s) => s.pageIndex !== currentPage.index);
+                  updateStickers([...others, ...next]);
+                }}
                 width={320}
-                testIdPrefix="cover"
+                testIdPrefix="page"
               />
+              {/* Page picker */}
+              <div className="mt-4">
+                <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">
+                  快速切换页面
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-2 scroll-area-hide" data-testid="row-page-picker">
+                  {note.pageLayout.map((p, i) => (
+                    <button
+                      key={p.index}
+                      type="button"
+                      onClick={() => setSelectedPageIndex(p.index)}
+                      className={`shrink-0 px-3 py-1.5 rounded-full text-xs border transition ${
+                        p.index === selectedPageIndex
+                          ? "bg-foreground text-background border-foreground"
+                          : "bg-card border-card-border hover-elevate"
+                      }`}
+                      data-testid={`button-pick-page-${p.index}`}
+                    >
+                      {i === 0 ? "封面" : `第 ${i + 1} 张`}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </Block>
 
             {/* Title */}
@@ -245,8 +385,61 @@ export default function ResultPage() {
               </div>
             </Block>
 
+            {/* Download all pages */}
+            <Block
+              title="下载编辑后的图片"
+              testId="block-download-pages"
+              subtitle="一键将所有页面(含贴纸)导出为 PNG,可整包下载或逐张下载到本地,再上传到小红书。"
+            >
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadAll("zip")}
+                  disabled={exportState === "running"}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium disabled:opacity-60"
+                  data-testid="button-download-all-zip"
+                >
+                  {exportState === "running" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : exportState === "done" ? (
+                    <Check className="size-4" />
+                  ) : (
+                    <Download className="size-4" />
+                  )}
+                  {exportState === "running"
+                    ? "正在打包…"
+                    : exportState === "done"
+                    ? "已开始下载"
+                    : "一键打包下载(ZIP)"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadAll("individual")}
+                  disabled={exportState === "running"}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-card text-sm hover-elevate disabled:opacity-60"
+                  data-testid="button-download-all-individual"
+                >
+                  <Download className="size-4" /> 逐张下载 PNG
+                </button>
+              </div>
+              {exportError && (
+                <div className="mt-2 text-xs text-amber-700 dark:text-amber-300" data-testid="export-error">
+                  <AlertTriangle className="size-3.5 inline mr-1" />
+                  {exportError}
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                由于浏览器安全策略,无法直接选择文件夹保存。我们会调用浏览器的下载机制,
+                文件会进入你的「下载」目录(可在浏览器设置中修改默认下载位置)。
+              </p>
+            </Block>
+
             {/* One-click xhs import */}
-            <XhsImport note={note} />
+            <XhsImport
+              note={note}
+              onDownloadAllZip={() => handleDownloadAll("zip")}
+              downloading={exportState === "running"}
+            />
 
             {/* Comment seeds */}
             <Block
@@ -307,6 +500,21 @@ export default function ResultPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Offscreen export frames (visually hidden but in DOM so html-to-image can read them) */}
+      <div
+        aria-hidden
+        style={{
+          position: "fixed",
+          left: "-99999px",
+          top: 0,
+          pointerEvents: "none",
+          opacity: 0,
+        }}
+        data-testid="export-frames-host"
+      >
+        {exportFrames}
       </div>
     </AppShell>
   );

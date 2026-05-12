@@ -1,43 +1,77 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
-  CoverDesign,
   GeneratedNote,
+  PageDesign,
   StickerOverlay,
-  StickerFont,
 } from "@/lib/types";
-import { STICKER_FONT_LIST, fontFamilyFor } from "@/lib/sticker-fonts";
+import { fontFamilyFor } from "@/lib/sticker-fonts";
 import { CoverFlat } from "@/components/cover-flat";
 import {
   Heart,
   MessageCircle,
   Bookmark,
   Share2,
-  Plus,
-  Trash2,
-  Pencil,
-  X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 interface Props {
   note: GeneratedNote;
-  cover: CoverDesign;
+  pageDesigns: Record<number, PageDesign>;
   stickers: StickerOverlay[];
+  selectedPageIndex: number;
+  onSelectPage: (index: number) => void;
   onStickersChange: (next: StickerOverlay[]) => void;
 }
 
-export function PhonePreview({ note, cover, stickers, onStickersChange }: Props) {
-  const stageRef = useRef<HTMLDivElement>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+// Width of the inner phone preview area in px (used to scale layouts).
+const PAGE_WIDTH = 304;
+
+export function PhonePreview({
+  note,
+  pageDesigns,
+  stickers,
+  selectedPageIndex,
+  onSelectPage,
+  onStickersChange,
+}: Props) {
+  const pages = note.pageLayout;
+  const pagerRef = useRef<HTMLDivElement>(null);
+  const suppressScrollSyncUntilRef = useRef(0);
   const [drag, setDrag] = useState<
     | null
     | { id: string; startX: number; startY: number; origX: number; origY: number }
   >(null);
+  const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
+  // Sync scroll position when selectedPageIndex changes from outside
+  useEffect(() => {
+    const idx = pages.findIndex((p) => p.index === selectedPageIndex);
+    if (idx < 0) return;
+    const pager = pagerRef.current;
+    if (!pager) return;
+    suppressScrollSyncUntilRef.current = Date.now() + 500;
+    pager.scrollTo({ left: idx * PAGE_WIDTH, behavior: "smooth" });
+  }, [selectedPageIndex, pages]);
+
+  // Determine current page from scroll position
+  function onScrollPager() {
+    const pager = pagerRef.current;
+    if (!pager) return;
+    if (Date.now() < suppressScrollSyncUntilRef.current) return;
+    const idx = Math.round(pager.scrollLeft / PAGE_WIDTH);
+    const target = pages[idx];
+    if (target && target.index !== selectedPageIndex) {
+      onSelectPage(target.index);
+    }
+  }
+
+  // Sticker drag handlers — bound to whichever page the sticker is on.
   useEffect(() => {
     if (!drag) return;
-    const stage = stageRef.current;
-    if (!stage) return;
-    const rect = stage.getBoundingClientRect();
+    const pageEl = pageRefs.current[selectedPageIndex];
+    if (!pageEl) return;
+    const rect = pageEl.getBoundingClientRect();
     function move(ev: PointerEvent) {
       if (!drag) return;
       const dx = ((ev.clientX - drag.startX) / rect.width) * 100;
@@ -63,104 +97,167 @@ export function PhonePreview({ note, cover, stickers, onStickersChange }: Props)
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [drag, stickers, onStickersChange]);
+  }, [drag, stickers, onStickersChange, selectedPageIndex]);
 
-  const addSticker = useCallback(() => {
-    const id = `stk_${Date.now()}`;
-    onStickersChange([
-      ...stickers,
-      {
-        id,
-        text: "添加文字",
-        x: 30,
-        y: 30,
-        rotation: 0,
-        font: "marker",
-        color: "#ffffff",
-        background: "rgba(232,89,107,0.85)",
-        fontSize: 16,
-      },
-    ]);
-    setEditingId(id);
-  }, [stickers, onStickersChange]);
-
-  const updateSticker = useCallback(
-    (id: string, patch: Partial<StickerOverlay>) => {
-      onStickersChange(stickers.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-    },
-    [stickers, onStickersChange],
-  );
-
-  const removeSticker = useCallback(
-    (id: string) => {
-      onStickersChange(stickers.filter((s) => s.id !== id));
-      setEditingId((s) => (s === id ? null : s));
-    },
-    [stickers, onStickersChange],
-  );
-
-  const editing = stickers.find((s) => s.id === editingId) || null;
+  function goPrev() {
+    const idx = pages.findIndex((p) => p.index === selectedPageIndex);
+    if (idx > 0) onSelectPage(pages[idx - 1].index);
+  }
+  function goNext() {
+    const idx = pages.findIndex((p) => p.index === selectedPageIndex);
+    if (idx >= 0 && idx < pages.length - 1) onSelectPage(pages[idx + 1].index);
+  }
 
   return (
     <div className="mx-auto w-[300px] md:w-[320px]" data-testid="phone-preview">
       <div className="relative rounded-[2.6rem] bg-foreground/90 dark:bg-black p-2 shadow-2xl ring-1 ring-black/10">
-        <div
-          className="rounded-[2.2rem] overflow-hidden bg-background relative"
-          ref={stageRef}
-        >
+        <div className="rounded-[2.2rem] overflow-hidden bg-background relative">
           {/* notch */}
           <div className="px-5 pt-2 pb-1 flex items-center justify-between text-[10px] text-foreground/80">
             <span>9:41</span>
             <span>● ● ●</span>
           </div>
 
-          {/* scrollable content - like reading a xhs note */}
-          <div
-            className="overflow-y-auto scroll-area-hide"
-            style={{ height: 620 }}
-            data-testid="phone-scroll"
-          >
-            {/* Cover flat */}
-            <div className="relative">
-              <CoverFlat cover={cover} width={304} />
+          {/* Horizontal pager for image pages */}
+          <div className="relative">
+            <div
+              ref={pagerRef}
+              onScroll={onScrollPager}
+              className="relative z-0 flex overflow-x-auto snap-x snap-mandatory scroll-area-hide"
+              style={{ scrollSnapType: "x mandatory" }}
+              data-testid="phone-image-pager"
+            >
+              {pages.map((p) => (
+                <div
+                  key={p.index}
+                  ref={(el) => {
+                    pageRefs.current[p.index] = el;
+                  }}
+                  className="relative shrink-0 snap-center"
+                  style={{ width: PAGE_WIDTH }}
+                  data-testid={`phone-page-${p.index}`}
+                >
+                  <CoverFlat cover={pageDesigns[p.index] || fallbackDesign(p.gradient)} width={PAGE_WIDTH} />
+                  {/* Sticker overlays for this page */}
+                  <div className="pointer-events-none absolute inset-0">
+                    {stickers
+                      .filter((s) => s.pageIndex === p.index)
+                      .map((s) => (
+                        <div
+                          key={s.id}
+                          style={{
+                            position: "absolute",
+                            left: `${s.x}%`,
+                            top: `${s.y}%`,
+                            transform: `rotate(${s.rotation}deg)`,
+                            color: s.color,
+                            background: s.background ?? "transparent",
+                            fontFamily: fontFamilyFor(s.font),
+                            fontSize: s.fontSize,
+                            fontWeight: 700,
+                            padding: "4px 10px",
+                            borderRadius: 14,
+                            pointerEvents: "auto",
+                            cursor: "grab",
+                            touchAction: "none",
+                            boxShadow:
+                              s.background && s.background !== "transparent"
+                                ? "0 4px 14px rgba(0,0,0,0.18)"
+                                : "0 2px 6px rgba(0,0,0,0.25)",
+                            textShadow:
+                              !s.background || s.background === "transparent"
+                                ? "0 2px 6px rgba(0,0,0,0.45)"
+                                : "none",
+                            userSelect: "none",
+                          }}
+                          data-testid={`sticker-overlay-${s.id}`}
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            onSelectPage(p.index);
+                            setDrag({
+                              id: s.id,
+                              startX: e.clientX,
+                              startY: e.clientY,
+                              origX: s.x,
+                              origY: s.y,
+                            });
+                          }}
+                        >
+                          {s.text}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ))}
             </div>
 
-            {/* Inner image cards (one per layout page after cover) */}
-            {note.pageLayout.slice(1).map((p) => (
-              <div
-                key={p.index}
-                className="relative aspect-[3/4] bg-card"
-                data-testid={`phone-page-${p.index}`}
-              >
-                {p.imageId ? null : (
-                  <div className="absolute inset-0" style={{ background: p.gradient }} />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
-                <div className="absolute bottom-3 left-3 right-3 text-white">
-                  <div className="text-xs font-semibold drop-shadow">{p.headline}</div>
-                  {p.caption && (
-                    <div className="mt-1 text-[10px] opacity-90 line-clamp-2">{p.caption}</div>
-                  )}
-                </div>
-              </div>
-            ))}
+            {/* Pager arrows */}
+            {pages.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={goPrev}
+                  className="absolute left-1 top-1/2 z-20 -translate-y-1/2 size-7 rounded-full bg-black/40 text-white inline-flex items-center justify-center backdrop-blur-sm"
+                  data-testid="phone-page-prev"
+                  aria-label="上一张"
+                >
+                  <ChevronLeft className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={goNext}
+                  className="absolute right-1 top-1/2 z-20 -translate-y-1/2 size-7 rounded-full bg-black/40 text-white inline-flex items-center justify-center backdrop-blur-sm"
+                  data-testid="phone-page-next"
+                  aria-label="下一张"
+                >
+                  <ChevronRight className="size-4" />
+                </button>
+              </>
+            )}
+            {/* Page dots */}
+            <div className="absolute bottom-2 left-0 right-0 z-20 flex justify-center gap-1.5 pointer-events-auto">
+              {pages.map((p, i) => (
+                <button
+                  key={p.index}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectPage(p.index);
+                  }}
+                  className={`h-1.5 rounded-full transition-all ${
+                    p.index === selectedPageIndex
+                      ? "w-4 bg-white"
+                      : "w-1.5 bg-white/60"
+                  }`}
+                  data-testid={`phone-page-dot-${p.index}`}
+                  aria-label={`第 ${i + 1} 张`}
+                />
+              ))}
+            </div>
+          </div>
 
-            {/* full body */}
-            <div className="px-4 py-4 text-foreground">
-              <div className="text-[15px] font-bold leading-snug" data-testid="text-preview-title">
-                {note.title}
-              </div>
-              <div className="mt-2 text-[12px] leading-relaxed whitespace-pre-line text-foreground/90" data-testid="text-preview-body">
-                {note.body}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {note.tags.map((t) => (
-                  <span key={t} className="text-[11px] text-primary">{t}</span>
-                ))}
-              </div>
-              <div className="mt-4 text-[11px] text-muted-foreground">
-                发布于 NoteStay · 仅根据你提供的内容生成
-              </div>
+          {/* Body text — vertical, no horizontal swipe interaction. */}
+          <div
+            className="overflow-y-auto scroll-area-hide px-4 py-4 text-foreground"
+            style={{ maxHeight: 320 }}
+            data-testid="phone-body-scroll"
+          >
+            <div className="text-[15px] font-bold leading-snug" data-testid="text-preview-title">
+              {note.title}
+            </div>
+            <div
+              className="mt-2 text-[12px] leading-relaxed whitespace-pre-line text-foreground/90"
+              data-testid="text-preview-body"
+            >
+              {note.body}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {note.tags.map((t) => (
+                <span key={t} className="text-[11px] text-primary">{t}</span>
+              ))}
+            </div>
+            <div className="mt-4 text-[11px] text-muted-foreground">
+              发布于 NoteStay · 仅根据你提供的内容生成
             </div>
           </div>
 
@@ -171,184 +268,23 @@ export function PhonePreview({ note, cover, stickers, onStickersChange }: Props)
             <span className="inline-flex items-center gap-1"><Bookmark className="size-3.5" /> 3.1k</span>
             <span className="inline-flex items-center gap-1"><Share2 className="size-3.5" /> 分享</span>
           </div>
-
-          {/* sticker overlays (above scroll, fixed inside phone frame) */}
-          <div className="pointer-events-none absolute inset-0">
-            {stickers.map((s) => (
-              <div
-                key={s.id}
-                style={{
-                  position: "absolute",
-                  left: `${s.x}%`,
-                  top: `${s.y}%`,
-                  transform: `rotate(${s.rotation}deg)`,
-                  color: s.color,
-                  background: s.background ?? "transparent",
-                  fontFamily: fontFamilyFor(s.font),
-                  fontSize: s.fontSize,
-                  fontWeight: 700,
-                  padding: "4px 10px",
-                  borderRadius: 14,
-                  pointerEvents: "auto",
-                  cursor: "grab",
-                  touchAction: "none",
-                  boxShadow:
-                    s.background && s.background !== "transparent"
-                      ? "0 4px 14px rgba(0,0,0,0.18)"
-                      : "0 2px 6px rgba(0,0,0,0.25)",
-                  textShadow:
-                    !s.background || s.background === "transparent"
-                      ? "0 2px 6px rgba(0,0,0,0.45)"
-                      : "none",
-                  outline: editingId === s.id ? "2px dashed #fff" : "none",
-                  outlineOffset: 2,
-                  userSelect: "none",
-                }}
-                data-testid={`sticker-overlay-${s.id}`}
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  setEditingId(s.id);
-                  setDrag({
-                    id: s.id,
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    origX: s.x,
-                    origY: s.y,
-                  });
-                }}
-              >
-                {s.text}
-              </div>
-            ))}
-          </div>
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-center gap-2">
-        <button
-          type="button"
-          onClick={addSticker}
-          className="inline-flex items-center gap-1 rounded-full bg-primary text-primary-foreground text-xs px-3 py-1.5"
-          data-testid="button-add-sticker"
-        >
-          <Plus className="size-3.5" /> 添加贴纸
-        </button>
-        {editing && (
-          <button
-            type="button"
-            onClick={() => removeSticker(editing.id)}
-            className="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 text-destructive text-xs px-3 py-1.5"
-            data-testid="button-remove-sticker"
-          >
-            <Trash2 className="size-3.5" /> 删除当前
-          </button>
-        )}
-      </div>
-
-      {editing && (
-        <div
-          className="mt-3 rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-2"
-          data-testid="sticker-editor-panel"
-        >
-          <div className="flex items-center justify-between">
-            <div className="font-semibold inline-flex items-center gap-1">
-              <Pencil className="size-3.5" /> 编辑贴纸
-            </div>
-            <button
-              type="button"
-              onClick={() => setEditingId(null)}
-              className="text-muted-foreground hover:text-foreground"
-              data-testid="button-close-sticker-editor"
-              aria-label="关闭"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-          <input
-            type="text"
-            value={editing.text}
-            onChange={(e) => updateSticker(editing.id, { text: e.target.value })}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-            data-testid="input-sticker-text"
-            placeholder="贴纸文字"
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <label className="space-y-1">
-              <span className="text-muted-foreground">字体</span>
-              <select
-                value={editing.font}
-                onChange={(e) =>
-                  updateSticker(editing.id, { font: e.target.value as StickerFont })
-                }
-                className="w-full rounded-md border border-input bg-background px-2 py-1"
-                data-testid="select-sticker-font"
-              >
-                {STICKER_FONT_LIST.map((f) => (
-                  <option key={f.key} value={f.key}>{f.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-muted-foreground">字号 {editing.fontSize}px</span>
-              <input
-                type="range"
-                min={10}
-                max={36}
-                value={editing.fontSize}
-                onChange={(e) =>
-                  updateSticker(editing.id, { fontSize: Number(e.target.value) })
-                }
-                className="w-full"
-                data-testid="input-sticker-size"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-muted-foreground">旋转 {editing.rotation}°</span>
-              <input
-                type="range"
-                min={-30}
-                max={30}
-                value={editing.rotation}
-                onChange={(e) =>
-                  updateSticker(editing.id, { rotation: Number(e.target.value) })
-                }
-                className="w-full"
-                data-testid="input-sticker-rotation"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-muted-foreground">颜色</span>
-              <input
-                type="color"
-                value={editing.color}
-                onChange={(e) => updateSticker(editing.id, { color: e.target.value })}
-                className="w-full h-7 rounded border border-input bg-background"
-                data-testid="input-sticker-color"
-              />
-            </label>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { label: "粉色", v: "rgba(232,89,107,0.85)" },
-              { label: "黑色", v: "rgba(0,0,0,0.55)" },
-              { label: "米白", v: "rgba(255,247,234,0.92)" },
-              { label: "透明", v: null as string | null },
-            ].map((b) => (
-              <button
-                key={b.label}
-                type="button"
-                onClick={() => updateSticker(editing.id, { background: b.v })}
-                className="rounded-full border border-border bg-background px-2 py-0.5"
-                data-testid={`sticker-bg-${b.label}`}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <p className="mt-3 text-center text-[11px] text-muted-foreground">
+        左右滑动切换图片页 · 当前第 {Math.max(0, pages.findIndex((p) => p.index === selectedPageIndex)) + 1} /
+        {pages.length} 张
+      </p>
     </div>
   );
+}
+
+function fallbackDesign(gradient: string): PageDesign {
+  return {
+    background: gradient,
+    bgImageUrl: null,
+    layers: [],
+  };
 }
 
 function clamp(n: number, lo: number, hi: number): number {

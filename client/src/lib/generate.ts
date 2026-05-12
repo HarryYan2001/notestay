@@ -3,6 +3,7 @@ import type {
   CoverDesign,
   CoverLayer,
   GeneratedNote,
+  PageDesign,
   PageLayout,
   StickerOverlay,
   StyleKey,
@@ -280,11 +281,13 @@ export function generateNote(input: AppInputState): GeneratedNote {
     seed,
   });
 
-  // Build default stickers (suggestions) — these float over the phone preview
+  // Build default stickers — bind first sticker to cover (page 0)
+  // and second sticker to first scene page (page 1) if present
   const stickers: StickerOverlay[] = stickerCopy.slice(0, 2).map((text, i) => ({
     id: `stk_${seed}_${i}`,
+    pageIndex: i === 0 ? 0 : (layout[1]?.index ?? 0),
     text,
-    x: i === 0 ? 12 : 58,
+    x: i === 0 ? 12 : 14,
     y: i === 0 ? 8 : 76,
     rotation: i === 0 ? -4 : 5,
     font: i === 0 ? "marker" : "rounded",
@@ -292,6 +295,21 @@ export function generateNote(input: AppInputState): GeneratedNote {
     background: i === 0 ? "rgba(0,0,0,0.45)" : "rgba(232,89,107,0.85)",
     fontSize: 14,
   }));
+
+  // Build per-page designs: page 0 = cover (already built); inner pages = scene designs
+  const pageDesigns: Record<number, PageDesign> = { 0: cover };
+  for (const page of layout) {
+    if (page.index === 0) continue;
+    const img = page.imageId
+      ? input.images.find((i) => i.id === page.imageId)
+      : undefined;
+    pageDesigns[page.index] = buildScenePageDesign({
+      styleKey: input.style,
+      page,
+      image: img,
+      seed: seed + page.index,
+    });
+  }
 
   return {
     styleKey: input.style,
@@ -302,9 +320,62 @@ export function generateNote(input: AppInputState): GeneratedNote {
     commentSeeds,
     pageLayout: layout,
     cover,
+    pageDesigns,
     stickers,
     warnings,
   };
+}
+
+function buildScenePageDesign(opts: {
+  styleKey: StyleKey;
+  page: PageLayout;
+  image: UploadedImage | undefined;
+  seed: number;
+}): PageDesign {
+  const { styleKey, page, image, seed } = opts;
+  const palette = STYLES[styleKey].palette;
+  const background = page.gradient ||
+    `linear-gradient(135deg, ${palette[0]} 0%, ${palette[1]} 55%, ${palette[2]} 100%)`;
+  const layers: CoverLayer[] = [];
+  if (image) {
+    layers.push({
+      id: `lyr_pi_${seed}`,
+      type: "image",
+      imageUrl: image.url,
+      x: 4,
+      y: 6,
+      w: 92,
+      h: 78,
+      rotation: 0,
+      z: 1,
+      offsetX: 50,
+      offsetY: 50,
+      zoom: 1,
+      radius: 18,
+      shadow: true,
+    });
+  }
+  if (page.headline) {
+    layers.push({
+      id: `lyr_ph_${seed}`,
+      type: "text",
+      text: page.headline,
+      x: 6,
+      y: 86,
+      w: 88,
+      h: 8,
+      rotation: 0,
+      z: 5,
+      color: "#ffffff",
+      fontSize: 16,
+      fontWeight: 800,
+      font: "sans",
+      align: "left",
+      background: "rgba(0,0,0,0.35)",
+      shadow: true,
+    });
+  }
+  return { background, bgImageUrl: null, layers };
 }
 
 function buildCoverDesign(opts: {

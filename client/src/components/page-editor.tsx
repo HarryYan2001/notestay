@@ -1,10 +1,12 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  CoverDesign,
-  CoverLayer,
   CoverImageLayer,
+  CoverLayer,
   CoverTextLayer,
+  PageDesign,
+  PageLayout,
   StickerFont,
+  StickerOverlay,
 } from "@/lib/types";
 import { STICKER_FONT_LIST, fontFamilyFor } from "@/lib/sticker-fonts";
 import {
@@ -13,60 +15,78 @@ import {
   Type,
   ZoomIn,
   ZoomOut,
-  Crop,
   RotateCcw,
   Upload,
+  Plus,
+  Pencil,
+  X,
+  Sticker,
+  Move,
 } from "lucide-react";
 
 interface Props {
-  design: CoverDesign;
-  onChange: (next: CoverDesign) => void;
-  width?: number; // px
-  height?: number; // px (aspect 3/4 default)
+  page: PageLayout;
+  design: PageDesign;
+  stickers: StickerOverlay[];                 // already filtered to this page
+  onChangeDesign: (next: PageDesign) => void;
+  onChangeStickers: (next: StickerOverlay[]) => void;
+  width?: number;
   testIdPrefix?: string;
 }
 
 type DragState =
   | { kind: "move"; layerId: string; startX: number; startY: number; origX: number; origY: number }
   | { kind: "resize"; layerId: string; startX: number; startY: number; origW: number; origH: number }
-  | { kind: "crop"; layerId: string; startX: number; startY: number; origOX: number; origOY: number };
+  | { kind: "rotate"; layerId: string; centerX: number; centerY: number; startAngle: number; origRot: number }
+  | { kind: "imgpan"; layerId: string; startX: number; startY: number; origOX: number; origOY: number };
 
-export function CoverEditor({
+type StickerDrag =
+  | { kind: "move"; id: string; startX: number; startY: number; origX: number; origY: number }
+  | { kind: "rotate"; id: string; centerX: number; centerY: number; startAngle: number; origRot: number };
+
+export function PageEditor({
+  page,
   design,
-  onChange,
+  stickers,
+  onChangeDesign,
+  onChangeStickers,
   width = 320,
-  height,
-  testIdPrefix = "cover",
+  testIdPrefix = "page",
 }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingImageId, setEditingImageId] = useState<string | null>(null); // when user double-clicks an image to pan inside its frame
   const [drag, setDrag] = useState<DragState | null>(null);
-  const stageH = height ?? Math.round((width * 4) / 3);
+  const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+  const [stickerDrag, setStickerDrag] = useState<StickerDrag | null>(null);
+  const stageH = Math.round((width * 4) / 3);
 
   const selected = design.layers.find((l) => l.id === selectedId) || null;
+  const selectedSticker = stickers.find((s) => s.id === selectedStickerId) || null;
 
   const updateLayer = useCallback(
     (id: string, patch: Partial<CoverLayer>) => {
-      onChange({
+      onChangeDesign({
         ...design,
         layers: design.layers.map((l) =>
           l.id === id ? ({ ...l, ...patch } as CoverLayer) : l,
         ),
       });
     },
-    [design, onChange],
+    [design, onChangeDesign],
   );
 
   const removeLayer = useCallback(
     (id: string) => {
-      onChange({
+      onChangeDesign({
         ...design,
         layers: design.layers.filter((l) => l.id !== id),
       });
       setSelectedId((s) => (s === id ? null : s));
+      setEditingImageId((s) => (s === id ? null : s));
     },
-    [design, onChange],
+    [design, onChangeDesign],
   );
 
   const bringForward = useCallback(
@@ -77,7 +97,7 @@ export function CoverEditor({
     [design.layers, updateLayer],
   );
 
-  // Drag/move/resize/crop handlers
+  // Drag/move/resize/rotate/imgpan handlers
   useEffect(() => {
     if (!drag) return;
     const stage = stageRef.current;
@@ -85,19 +105,27 @@ export function CoverEditor({
     const rect = stage.getBoundingClientRect();
     function move(ev: PointerEvent) {
       if (!drag) return;
-      const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
-      const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
       if (drag.kind === "move") {
+        const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
+        const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
         updateLayer(drag.layerId, {
           x: clamp(drag.origX + dxPct, -10, 105),
           y: clamp(drag.origY + dyPct, -10, 105),
         });
       } else if (drag.kind === "resize") {
+        const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
+        const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
         updateLayer(drag.layerId, {
           w: clamp(drag.origW + dxPct, 8, 110),
           h: clamp(drag.origH + dyPct, 4, 110),
         });
-      } else if (drag.kind === "crop") {
+      } else if (drag.kind === "rotate") {
+        const ang = Math.atan2(ev.clientY - drag.centerY, ev.clientX - drag.centerX);
+        const deg = (ang - drag.startAngle) * (180 / Math.PI);
+        updateLayer(drag.layerId, { rotation: Math.round(drag.origRot + deg) });
+      } else if (drag.kind === "imgpan") {
+        const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
+        const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
         const layer = design.layers.find((l) => l.id === drag.layerId);
         if (layer?.type !== "image") return;
         updateLayer(drag.layerId, {
@@ -117,9 +145,58 @@ export function CoverEditor({
     };
   }, [drag, design.layers, updateLayer]);
 
+  // Sticker drag handlers
+  useEffect(() => {
+    if (!stickerDrag) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const rect = stage.getBoundingClientRect();
+    function move(ev: PointerEvent) {
+      if (!stickerDrag) return;
+      if (stickerDrag.kind === "move") {
+        const dxPct = ((ev.clientX - stickerDrag.startX) / rect.width) * 100;
+        const dyPct = ((ev.clientY - stickerDrag.startY) / rect.height) * 100;
+        onChangeStickers(
+          stickers.map((s) =>
+            s.id === stickerDrag.id
+              ? {
+                  ...s,
+                  x: clamp(stickerDrag.origX + dxPct, -5, 95),
+                  y: clamp(stickerDrag.origY + dyPct, -5, 95),
+                }
+              : s,
+          ),
+        );
+      } else {
+        const ang = Math.atan2(
+          ev.clientY - stickerDrag.centerY,
+          ev.clientX - stickerDrag.centerX,
+        );
+        const deg = (ang - stickerDrag.startAngle) * (180 / Math.PI);
+        onChangeStickers(
+          stickers.map((s) =>
+            s.id === stickerDrag.id
+              ? { ...s, rotation: Math.round(stickerDrag.origRot + deg) }
+              : s,
+          ),
+        );
+      }
+    }
+    function up() {
+      setStickerDrag(null);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [stickerDrag, stickers, onChangeStickers]);
+
   function startMove(e: React.PointerEvent, l: CoverLayer) {
     e.stopPropagation();
     setSelectedId(l.id);
+    setSelectedStickerId(null);
     setDrag({
       kind: "move",
       layerId: l.id,
@@ -131,7 +208,6 @@ export function CoverEditor({
   }
   function startResize(e: React.PointerEvent, l: CoverLayer) {
     e.stopPropagation();
-    setSelectedId(l.id);
     setDrag({
       kind: "resize",
       layerId: l.id,
@@ -141,16 +217,57 @@ export function CoverEditor({
       origH: l.h,
     });
   }
-  function startCrop(e: React.PointerEvent, l: CoverImageLayer) {
+  function startRotate(e: React.PointerEvent, l: CoverLayer, target: HTMLElement) {
     e.stopPropagation();
-    setSelectedId(l.id);
+    const rect = target.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
     setDrag({
-      kind: "crop",
+      kind: "rotate",
+      layerId: l.id,
+      centerX: cx,
+      centerY: cy,
+      startAngle: Math.atan2(e.clientY - cy, e.clientX - cx),
+      origRot: l.rotation,
+    });
+  }
+  function startImgPan(e: React.PointerEvent, l: CoverImageLayer) {
+    e.stopPropagation();
+    setDrag({
+      kind: "imgpan",
       layerId: l.id,
       startX: e.clientX,
       startY: e.clientY,
       origOX: l.offsetX,
       origOY: l.offsetY,
+    });
+  }
+
+  function startStickerMove(e: React.PointerEvent, s: StickerOverlay) {
+    e.stopPropagation();
+    setSelectedStickerId(s.id);
+    setSelectedId(null);
+    setStickerDrag({
+      kind: "move",
+      id: s.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: s.x,
+      origY: s.y,
+    });
+  }
+  function startStickerRotate(e: React.PointerEvent, s: StickerOverlay, target: HTMLElement) {
+    e.stopPropagation();
+    const rect = target.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    setStickerDrag({
+      kind: "rotate",
+      id: s.id,
+      centerX: cx,
+      centerY: cy,
+      startAngle: Math.atan2(e.clientY - cy, e.clientX - cx),
+      origRot: s.rotation,
     });
   }
 
@@ -175,8 +292,9 @@ export function CoverEditor({
       background: "rgba(0,0,0,0.35)",
       shadow: true,
     };
-    onChange({ ...design, layers: [...design.layers, newLayer] });
+    onChangeDesign({ ...design, layers: [...design.layers, newLayer] });
     setSelectedId(id);
+    setSelectedStickerId(null);
   }
 
   function onPickImage(files: FileList | null, mode: "add" | "replace") {
@@ -205,7 +323,7 @@ export function CoverEditor({
         radius: 14,
         shadow: true,
       };
-      onChange({ ...design, layers: [...design.layers, newLayer] });
+      onChangeDesign({ ...design, layers: [...design.layers, newLayer] });
       setSelectedId(id);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -214,11 +332,51 @@ export function CoverEditor({
   function replaceBackgroundImage(files: FileList | null) {
     if (!files || !files[0]) return;
     const url = URL.createObjectURL(files[0]);
-    onChange({ ...design, bgImageUrl: url });
+    onChangeDesign({ ...design, bgImageUrl: url });
+  }
+
+  // Stickers
+  function addSticker() {
+    const id = `stk_${Date.now()}`;
+    onChangeStickers([
+      ...stickers,
+      {
+        id,
+        pageIndex: page.index,
+        text: "添加文字",
+        x: 30,
+        y: 30,
+        rotation: 0,
+        font: "marker",
+        color: "#ffffff",
+        background: "rgba(232,89,107,0.85)",
+        fontSize: 16,
+      },
+    ]);
+    setSelectedStickerId(id);
+    setSelectedId(null);
+  }
+  function updateSticker(id: string, patch: Partial<StickerOverlay>) {
+    onChangeStickers(stickers.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
+  function removeSticker(id: string) {
+    onChangeStickers(stickers.filter((s) => s.id !== id));
+    setSelectedStickerId((s) => (s === id ? null : s));
   }
 
   return (
     <div className="space-y-3" data-testid={`${testIdPrefix}-editor`}>
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <div>
+          正在编辑 ·
+          <span className="ml-1 font-semibold text-foreground" data-testid={`${testIdPrefix}-current-index`}>
+            第 {page.index + 1} 张
+          </span>
+          <span className="ml-1">{page.index === 0 ? "(封面)" : `(${page.role})`}</span>
+        </div>
+        <div className="text-[11px]">点击页面图片选中,再点一次可拖动调整裁切位置</div>
+      </div>
+
       <div
         ref={stageRef}
         className="relative mx-auto overflow-hidden rounded-2xl shadow-lg select-none"
@@ -227,7 +385,11 @@ export function CoverEditor({
           height: stageH,
           background: design.background,
         }}
-        onPointerDown={() => setSelectedId(null)}
+        onPointerDown={() => {
+          setSelectedId(null);
+          setSelectedStickerId(null);
+          setEditingImageId(null);
+        }}
         data-testid={`${testIdPrefix}-stage`}
       >
         {design.bgImageUrl && (
@@ -242,17 +404,13 @@ export function CoverEditor({
         {[...design.layers]
           .sort((a, b) => a.z - b.z)
           .map((l) => {
-            const left = `${l.x}%`;
-            const top = `${l.y}%`;
-            const w = `${l.w}%`;
-            const h = `${l.h}%`;
             const isSelected = l.id === selectedId;
             const common: React.CSSProperties = {
               position: "absolute",
-              left,
-              top,
-              width: w,
-              height: h,
+              left: `${l.x}%`,
+              top: `${l.y}%`,
+              width: `${l.w}%`,
+              height: `${l.h}%`,
               transform: `rotate(${l.rotation}deg)`,
               transformOrigin: "center",
               zIndex: l.z,
@@ -260,19 +418,32 @@ export function CoverEditor({
               touchAction: "none",
             };
             if (l.type === "image") {
+              const isImageEditing = editingImageId === l.id;
               return (
                 <div
                   key={l.id}
                   style={{
                     ...common,
                     borderRadius: l.radius,
-                    overflow: "hidden",
+                    overflow: "hidden", // image MUST not exceed module bounds
                     boxShadow: l.shadow ? "0 8px 24px rgba(0,0,0,0.25)" : "none",
                     outline: isSelected ? "2px solid #fff" : "none",
                     outlineOffset: isSelected ? 2 : 0,
                   }}
                   data-testid={`${testIdPrefix}-layer-${l.id}`}
-                  onPointerDown={(e) => startMove(e, l)}
+                  onPointerDown={(e) => {
+                    if (isSelected && isImageEditing) {
+                      // already editing image — start pan
+                      startImgPan(e, l);
+                    } else {
+                      startMove(e, l);
+                    }
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedId(l.id);
+                    setEditingImageId(l.id);
+                  }}
                 >
                   <img
                     src={l.imageUrl}
@@ -287,23 +458,24 @@ export function CoverEditor({
                       objectPosition: `${l.offsetX}% ${l.offsetY}%`,
                       transform: `scale(${l.zoom})`,
                       transformOrigin: `${l.offsetX}% ${l.offsetY}%`,
+                      pointerEvents: "none",
                     }}
                   />
                   {isSelected && (
                     <>
-                      <div
-                        className="absolute right-0 bottom-0 size-4 bg-white rounded-tl-md cursor-se-resize"
-                        onPointerDown={(e) => startResize(e, l)}
-                        data-testid={`${testIdPrefix}-resize-${l.id}`}
+                      <ResizeHandle onPointerDown={(e) => startResize(e, l)} testId={`${testIdPrefix}-resize-${l.id}`} />
+                      <RotateHandle
+                        onPointerDown={(e) => {
+                          const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                          startRotate(e, l, target);
+                        }}
+                        testId={`${testIdPrefix}-rotate-${l.id}`}
                       />
-                      <div
-                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-6 rounded-full bg-black/50 text-white inline-flex items-center justify-center cursor-move"
-                        onPointerDown={(e) => startCrop(e, l)}
-                        title="拖动以裁切位置"
-                        data-testid={`${testIdPrefix}-crop-${l.id}`}
-                      >
-                        <Crop className="size-3" />
-                      </div>
+                      {isImageEditing && (
+                        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white">
+                          <Move className="size-3" /> 拖动图片调整位置
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -343,20 +515,73 @@ export function CoverEditor({
                     width: "100%",
                     whiteSpace: "pre-wrap",
                     textShadow: l.shadow ? "0 2px 8px rgba(0,0,0,0.45)" : "none",
+                    pointerEvents: "none",
                   }}
                 >
                   {l.text}
                 </div>
                 {isSelected && (
-                  <div
-                    className="absolute right-0 bottom-0 size-4 bg-white rounded-tl-md cursor-se-resize"
-                    onPointerDown={(e) => startResize(e, l)}
-                    data-testid={`${testIdPrefix}-resize-${l.id}`}
-                  />
+                  <>
+                    <ResizeHandle onPointerDown={(e) => startResize(e, l)} testId={`${testIdPrefix}-resize-${l.id}`} />
+                    <RotateHandle
+                      onPointerDown={(e) => {
+                        const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                        startRotate(e, l, target);
+                      }}
+                      testId={`${testIdPrefix}-rotate-${l.id}`}
+                    />
+                  </>
                 )}
               </div>
             );
           })}
+
+        {/* Stickers — rendered on top */}
+        {stickers.map((s) => (
+          <div
+            key={s.id}
+            style={{
+              position: "absolute",
+              left: `${s.x}%`,
+              top: `${s.y}%`,
+              transform: `rotate(${s.rotation}deg)`,
+              color: s.color,
+              background: s.background ?? "transparent",
+              fontFamily: fontFamilyFor(s.font),
+              fontSize: s.fontSize,
+              fontWeight: 700,
+              padding: "4px 10px",
+              borderRadius: 14,
+              cursor: "grab",
+              touchAction: "none",
+              boxShadow:
+                s.background && s.background !== "transparent"
+                  ? "0 4px 14px rgba(0,0,0,0.18)"
+                  : "0 2px 6px rgba(0,0,0,0.25)",
+              textShadow:
+                !s.background || s.background === "transparent"
+                  ? "0 2px 6px rgba(0,0,0,0.45)"
+                  : "none",
+              outline: s.id === selectedStickerId ? "2px dashed #fff" : "none",
+              outlineOffset: 2,
+              userSelect: "none",
+              zIndex: 1000,
+            }}
+            data-testid={`${testIdPrefix}-sticker-${s.id}`}
+            onPointerDown={(e) => startStickerMove(e, s)}
+          >
+            {s.text}
+            {s.id === selectedStickerId && (
+              <RotateHandle
+                onPointerDown={(e) => {
+                  const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                  startStickerRotate(e, s, target);
+                }}
+                testId={`${testIdPrefix}-sticker-rotate-${s.id}`}
+              />
+            )}
+          </div>
+        ))}
       </div>
 
       {/* Toolbar */}
@@ -392,6 +617,14 @@ export function CoverEditor({
         >
           <Type className="size-3.5" /> 新增文字
         </button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
+          onClick={addSticker}
+          data-testid={`${testIdPrefix}-add-sticker`}
+        >
+          <Sticker className="size-3.5" /> 添加贴纸
+        </button>
         <label
           className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate cursor-pointer"
           data-testid={`${testIdPrefix}-bg-image`}
@@ -408,7 +641,7 @@ export function CoverEditor({
           <button
             type="button"
             className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
-            onClick={() => onChange({ ...design, bgImageUrl: null })}
+            onClick={() => onChangeDesign({ ...design, bgImageUrl: null })}
             data-testid={`${testIdPrefix}-bg-clear`}
           >
             <Trash2 className="size-3.5" /> 移除背景图
@@ -418,7 +651,10 @@ export function CoverEditor({
 
       {/* Selected layer panel */}
       {selected ? (
-        <div className="rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-3" data-testid={`${testIdPrefix}-selected-panel`}>
+        <div
+          className="rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-3"
+          data-testid={`${testIdPrefix}-selected-panel`}
+        >
           <div className="flex items-center justify-between">
             <div className="font-semibold">
               {selected.type === "image" ? "图片图层" : "文字图层"}
@@ -448,6 +684,10 @@ export function CoverEditor({
               layer={selected}
               onChange={(p) => updateLayer(selected.id, p)}
               onReplace={() => fileInputRef.current?.click()}
+              onTogglePan={() =>
+                setEditingImageId((s) => (s === selected.id ? null : selected.id))
+              }
+              panEditing={editingImageId === selected.id}
               testIdPrefix={testIdPrefix}
             />
           ) : (
@@ -458,11 +698,154 @@ export function CoverEditor({
             />
           )}
         </div>
+      ) : selectedSticker ? (
+        <div
+          className="rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-2"
+          data-testid={`${testIdPrefix}-sticker-panel`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="font-semibold inline-flex items-center gap-1">
+              <Pencil className="size-3.5" /> 编辑贴纸
+            </div>
+            <button
+              type="button"
+              onClick={() => removeSticker(selectedSticker.id)}
+              className="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 text-destructive px-2 py-0.5"
+              data-testid={`${testIdPrefix}-sticker-delete`}
+            >
+              <Trash2 className="size-3" /> 删除
+            </button>
+          </div>
+          <input
+            type="text"
+            value={selectedSticker.text}
+            onChange={(e) => updateSticker(selectedSticker.id, { text: e.target.value })}
+            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            data-testid={`${testIdPrefix}-sticker-text`}
+            placeholder="贴纸文字"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="space-y-1">
+              <span className="text-muted-foreground">字体</span>
+              <select
+                value={selectedSticker.font}
+                onChange={(e) =>
+                  updateSticker(selectedSticker.id, { font: e.target.value as StickerFont })
+                }
+                className="w-full rounded-md border border-input bg-background px-2 py-1"
+                data-testid={`${testIdPrefix}-sticker-font`}
+              >
+                {STICKER_FONT_LIST.map((f) => (
+                  <option key={f.key} value={f.key}>{f.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-muted-foreground">字号 {selectedSticker.fontSize}px</span>
+              <input
+                type="range"
+                min={10}
+                max={36}
+                value={selectedSticker.fontSize}
+                onChange={(e) =>
+                  updateSticker(selectedSticker.id, { fontSize: Number(e.target.value) })
+                }
+                className="w-full"
+                data-testid={`${testIdPrefix}-sticker-size`}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-muted-foreground">旋转 {selectedSticker.rotation}°</span>
+              <input
+                type="range"
+                min={-180}
+                max={180}
+                value={selectedSticker.rotation}
+                onChange={(e) =>
+                  updateSticker(selectedSticker.id, { rotation: Number(e.target.value) })
+                }
+                className="w-full"
+                data-testid={`${testIdPrefix}-sticker-rotation`}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-muted-foreground">颜色</span>
+              <input
+                type="color"
+                value={selectedSticker.color}
+                onChange={(e) => updateSticker(selectedSticker.id, { color: e.target.value })}
+                className="w-full h-7 rounded border border-input bg-background"
+                data-testid={`${testIdPrefix}-sticker-color`}
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { label: "粉色", v: "rgba(232,89,107,0.85)" },
+              { label: "黑色", v: "rgba(0,0,0,0.55)" },
+              { label: "米白", v: "rgba(255,247,234,0.92)" },
+              { label: "透明", v: null as string | null },
+            ].map((b) => (
+              <button
+                key={b.label}
+                type="button"
+                onClick={() => updateSticker(selectedSticker.id, { background: b.v })}
+                className="rounded-full border border-border bg-background px-2 py-0.5"
+                data-testid={`${testIdPrefix}-sticker-bg-${b.label}`}
+              >
+                {b.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setSelectedStickerId(null)}
+              className="ml-auto inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 hover-elevate"
+              data-testid={`${testIdPrefix}-sticker-close`}
+            >
+              <X className="size-3" /> 关闭
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-card/30 p-3 text-xs text-muted-foreground">
-          点击封面上的图层进行编辑;拖拽移动、右下角缩放、中心十字图标拖动裁切。
+          点击页面上的图层进行编辑;拖拽移动,右下角缩放,顶部圆点旋转;双击图片可调整裁切位置;贴纸可直接拖动 / 旋转。
         </div>
       )}
+    </div>
+  );
+}
+
+function ResizeHandle({
+  onPointerDown,
+  testId,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void;
+  testId: string;
+}) {
+  return (
+    <div
+      className="absolute right-0 bottom-0 size-4 bg-white rounded-tl-md cursor-se-resize"
+      onPointerDown={onPointerDown}
+      data-testid={testId}
+    />
+  );
+}
+
+function RotateHandle({
+  onPointerDown,
+  testId,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void;
+  testId: string;
+}) {
+  return (
+    <div
+      className="absolute -top-3 left-1/2 -translate-x-1/2 size-4 rounded-full bg-white shadow inline-flex items-center justify-center cursor-grab"
+      onPointerDown={onPointerDown}
+      data-testid={testId}
+      title="旋转"
+    >
+      <span className="block size-2 rounded-full border-2 border-primary" />
     </div>
   );
 }
@@ -471,11 +854,15 @@ function ImageLayerPanel({
   layer,
   onChange,
   onReplace,
+  onTogglePan,
+  panEditing,
   testIdPrefix,
 }: {
   layer: CoverImageLayer;
   onChange: (p: Partial<CoverImageLayer>) => void;
   onReplace: () => void;
+  onTogglePan: () => void;
+  panEditing: boolean;
   testIdPrefix: string;
 }) {
   return (
@@ -488,6 +875,18 @@ function ImageLayerPanel({
           data-testid={`${testIdPrefix}-replace-image`}
         >
           <Upload className="size-3" /> 替换图片
+        </button>
+        <button
+          type="button"
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${
+            panEditing
+              ? "bg-primary text-primary-foreground border-primary"
+              : "border-border bg-background hover-elevate"
+          }`}
+          onClick={onTogglePan}
+          data-testid={`${testIdPrefix}-pan-image`}
+        >
+          <Move className="size-3" /> {panEditing ? "退出调整图片" : "调整图片位置"}
         </button>
         <button
           type="button"
@@ -533,8 +932,8 @@ function ImageLayerPanel({
           <span className="text-muted-foreground">旋转 {layer.rotation}°</span>
           <input
             type="range"
-            min={-30}
-            max={30}
+            min={-180}
+            max={180}
             value={layer.rotation}
             onChange={(e) => onChange({ rotation: Number(e.target.value) })}
             className="w-full"
@@ -640,8 +1039,8 @@ function TextLayerPanel({
           <span className="text-muted-foreground">旋转 {layer.rotation}°</span>
           <input
             type="range"
-            min={-30}
-            max={30}
+            min={-180}
+            max={180}
             value={layer.rotation}
             onChange={(e) => onChange({ rotation: Number(e.target.value) })}
             className="w-full"

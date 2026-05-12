@@ -1,14 +1,16 @@
 import { useState } from "react";
 import type { GeneratedNote } from "@/lib/types";
-import { Check, ExternalLink, Copy, Info, AlertTriangle } from "lucide-react";
+import { Check, ExternalLink, Copy, Info, AlertTriangle, Download, Loader2 } from "lucide-react";
 
 const XHS_CREATOR_URL = "https://creator.xiaohongshu.com/publish/publish?source=web";
 
 interface Props {
   note: GeneratedNote;
+  onDownloadAllZip?: () => void | Promise<void>;
+  downloading?: boolean;
 }
 
-export function XhsImport({ note }: Props) {
+export function XhsImport({ note, onDownloadAllZip, downloading }: Props) {
   const [status, setStatus] = useState<"idle" | "copying" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [showManualCopy, setShowManualCopy] = useState(false);
@@ -98,13 +100,31 @@ export function XhsImport({ note }: Props) {
         <div>
           <h3 className="text-sm font-semibold tracking-wide">一键导入小红书</h3>
           <p className="text-xs text-muted-foreground mt-1">
-            点击下方按钮:自动复制完整文案到剪贴板,并在新标签页打开小红书创作中心,
-            到达后只需 <strong>Ctrl/Cmd + V</strong> 即可粘贴标题与正文。
+            两步走:
+            <strong>① 先「导出全部图片」</strong>(含贴纸,会保存到本地下载目录) ·
+            <strong>② 再「一键导入小红书」</strong>(自动复制文案 + 打开创作中心),
+            到达后只需 <strong>Ctrl/Cmd + V</strong> 粘贴文案,并在创作中心上传刚刚下载的图片即可。
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
+        {onDownloadAllZip && (
+          <button
+            type="button"
+            onClick={() => onDownloadAllZip?.()}
+            disabled={downloading}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium disabled:opacity-60"
+            data-testid="button-xhs-download-images"
+          >
+            {downloading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            {downloading ? "正在导出图片…" : "一键导出全部图片(含贴纸)"}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleOneClick}
