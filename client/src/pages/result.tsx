@@ -1,20 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { useApp } from "@/lib/app-state";
 import { STYLES, STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
-import type { GeneratedNote } from "@/lib/types";
+import type { CoverDesign, GeneratedNote, StickerOverlay } from "@/lib/types";
+import { CoverEditor } from "@/components/cover-editor";
+import { PhonePreview } from "@/components/phone-preview";
+import { XhsImport } from "@/components/xhs-import";
 import {
   Copy,
   Check,
   RefreshCw,
-  Heart,
-  MessageCircle,
-  Bookmark,
-  Share2,
   ChevronLeft,
-  ChevronRight,
   AlertTriangle,
   Sparkles,
 } from "lucide-react";
@@ -23,12 +21,7 @@ export default function ResultPage() {
   const app = useApp();
   const [, navigate] = useLocation();
   const [copied, setCopied] = useState<string | null>(null);
-  const [pageIdx, setPageIdx] = useState(0);
-  const [coverTextOffset, setCoverTextOffset] = useState({ x: 0, y: 0 });
-  const [coverZoom, setCoverZoom] = useState(1.08);
-  const imageMap = useImageMap();
 
-  // If no generated note yet, redirect back to create
   useEffect(() => {
     if (!app.generated) navigate("/create");
   }, [app.generated, navigate]);
@@ -47,7 +40,15 @@ export default function ResultPage() {
   const style = STYLES[note.styleKey];
 
   function updateNote(patch: Partial<GeneratedNote>) {
-    app.setGenerated({ ...note, ...patch });
+    if (!app.generated) return;
+    app.setGenerated({ ...app.generated, ...patch });
+  }
+
+  function updateCover(cover: CoverDesign) {
+    updateNote({ cover });
+  }
+  function updateStickers(stickers: StickerOverlay[]) {
+    updateNote({ stickers });
   }
 
   function copy(label: string, text: string) {
@@ -60,14 +61,12 @@ export default function ResultPage() {
   function regenerate() {
     const next = generateNote(app.state);
     app.setGenerated(next);
-    setPageIdx(0);
   }
 
   function switchStyle(key: keyof typeof STYLES) {
     app.setStyle(key);
     const next = generateNote({ ...app.state, style: key });
     app.setGenerated(next);
-    setPageIdx(0);
   }
 
   return (
@@ -142,59 +141,30 @@ export default function ResultPage() {
         </div>
 
         <div className="mt-8 grid lg:grid-cols-12 gap-8">
-          {/* LEFT: phone preview */}
-          <div className="lg:col-span-5">
+          {/* LEFT: phone preview with stickers */}
+          <div className="lg:col-span-5 space-y-4">
             <PhonePreview
               note={note}
-              pageIdx={pageIdx}
-              onPrev={() => setPageIdx((i) => Math.max(0, i - 1))}
-              onNext={() => setPageIdx((i) => Math.min(note.pageLayout.length - 1, i + 1))}
-              imageMap={imageMap}
-              coverTextOffset={coverTextOffset}
-              onCoverTextOffsetChange={setCoverTextOffset}
-              coverZoom={coverZoom}
+              cover={note.cover}
+              stickers={note.stickers}
+              onStickersChange={updateStickers}
             />
-            <p className="mt-3 text-xs text-muted-foreground text-center">
-              手机端预览 · 封面标题可拖拽,所见即所得
+            <p className="text-xs text-muted-foreground text-center">
+              手机端预览 · 可上下滚动 · 贴纸可在画面上拖拽与编辑
             </p>
-            <div className="mt-3 rounded-2xl border border-card-border bg-card/70 p-3 text-xs" data-testid="cover-editor-panel">
-              <div className="font-semibold text-foreground">封面编辑器</div>
-              <div className="mt-1 text-muted-foreground">拖动封面大标题调整位置;主图默认按黄金分割安全区裁切。</div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-full border border-border px-3 py-1 hover-elevate"
-                  onClick={() => setCoverZoom((z) => Math.max(1, Number((z - 0.04).toFixed(2))))}
-                  data-testid="button-cover-zoom-out"
-                >
-                  缩小主图
-                </button>
-                <button
-                  type="button"
-                  className="rounded-full border border-border px-3 py-1 hover-elevate"
-                  onClick={() => setCoverZoom((z) => Math.min(1.3, Number((z + 0.04).toFixed(2))))}
-                  data-testid="button-cover-zoom-in"
-                >
-                  放大主图
-                </button>
-                <button
-                  type="button"
-                  className="rounded-full bg-foreground px-3 py-1 text-background hover:opacity-90"
-                  onClick={() => {
-                    setCoverTextOffset({ x: 0, y: 0 });
-                    setCoverZoom(1.08);
-                    setPageIdx(0);
-                  }}
-                  data-testid="button-cover-reset"
-                >
-                  重置封面
-                </button>
-              </div>
-            </div>
           </div>
 
-          {/* RIGHT: content blocks */}
+          {/* MIDDLE/RIGHT: cover editor + text editors */}
           <div className="lg:col-span-7 space-y-6">
+            <Block title="封面编辑" testId="block-cover-editor" subtitle="拖拽图层移动 · 右下角缩放 · 中心十字裁切 · 可替换/新增/删除">
+              <CoverEditor
+                design={note.cover}
+                onChange={updateCover}
+                width={320}
+                testIdPrefix="cover"
+              />
+            </Block>
+
             {/* Title */}
             <Block
               title="标题"
@@ -275,29 +245,8 @@ export default function ResultPage() {
               </div>
             </Block>
 
-            {/* Sticker copy */}
-            <Block title="贴纸文案 / 大字" testId="block-stickers">
-              <div className="grid sm:grid-cols-2 gap-2">
-                {note.stickerCopy.map((s, i) => (
-                  <div
-                    key={i}
-                    className="rounded-xl border border-card-border bg-card px-3 py-2 text-sm flex items-center justify-between gap-2"
-                    data-testid={`sticker-${i}`}
-                  >
-                    <span>{s}</span>
-                    <button
-                      type="button"
-                      onClick={() => copy(`sticker-${i}`, s)}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                      data-testid={`button-copy-sticker-${i}`}
-                      aria-label="复制"
-                    >
-                      {copied === `sticker-${i}` ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </Block>
+            {/* One-click xhs import */}
+            <XhsImport note={note} />
 
             {/* Comment seeds */}
             <Block
@@ -363,21 +312,6 @@ export default function ResultPage() {
   );
 }
 
-function useImageMap() {
-  const app = useApp();
-  return useMemo(() => {
-    const map: Record<string, string> = {};
-    app.state.images.forEach((i) => (map[i.id] = i.url));
-    return map;
-  }, [app.state.images]);
-}
-
-function roleLabel(r: string) {
-  if (r === "cover") return "封面页";
-  if (r === "verdict") return "总结页";
-  return "内页";
-}
-
 function buildFullCopy(n: GeneratedNote) {
   return [
     n.title,
@@ -387,9 +321,6 @@ function buildFullCopy(n: GeneratedNote) {
     n.tags.join(" "),
     "",
     "---",
-    "贴纸文案:",
-    ...n.stickerCopy,
-    "",
     "评论引导:",
     ...n.commentSeeds,
   ].join("\n");
@@ -397,19 +328,24 @@ function buildFullCopy(n: GeneratedNote) {
 
 function Block({
   title,
+  subtitle,
   children,
   actions,
   testId,
 }: {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
   actions?: React.ReactNode;
   testId?: string;
 }) {
   return (
     <section className="rounded-2xl border border-card-border bg-card/70 backdrop-blur-sm p-5" data-testid={testId}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-wide">{title}</h3>
+      <div className="flex items-start justify-between mb-3 gap-3">
+        <div>
+          <h3 className="text-sm font-semibold tracking-wide">{title}</h3>
+          {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+        </div>
         {actions}
       </div>
       {children}
@@ -428,224 +364,5 @@ function CopyBtn({ active, onClick, testId }: { active: boolean; onClick: () => 
       {active ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
       {active ? "已复制" : "复制"}
     </button>
-  );
-}
-
-function PhonePreview({
-  note,
-  pageIdx,
-  onPrev,
-  onNext,
-  imageMap,
-  coverTextOffset,
-  onCoverTextOffsetChange,
-  coverZoom,
-}: {
-  note: GeneratedNote;
-  pageIdx: number;
-  onPrev: () => void;
-  onNext: () => void;
-  imageMap: Record<string, string>;
-  coverTextOffset: { x: number; y: number };
-  onCoverTextOffsetChange: (offset: { x: number; y: number }) => void;
-  coverZoom: number;
-}) {
-  const current = note.pageLayout[pageIdx] ?? note.pageLayout[0];
-  const style = STYLES[note.styleKey];
-  return (
-    <div className="mx-auto w-[300px] md:w-[320px]" data-testid="phone-preview">
-      <div className="relative rounded-[2.6rem] bg-foreground/90 dark:bg-black p-2 shadow-2xl ring-1 ring-black/10">
-        <div className="rounded-[2.2rem] overflow-hidden bg-background">
-          {/* status bar */}
-          <div className="px-5 pt-2 pb-1 flex items-center justify-between text-[10px] text-foreground/80">
-            <span>9:41</span>
-            <span>● ● ●</span>
-          </div>
-
-          {/* image / cover area */}
-          <div className="relative aspect-[3/4]">
-            {current.role === "cover" ? (
-              <CoverArt
-                note={note}
-                styleName={style.english}
-                current={current}
-                imageUrls={Object.values(imageMap)}
-                textOffset={coverTextOffset}
-                onTextOffsetChange={onCoverTextOffsetChange}
-                zoom={coverZoom}
-              />
-            ) : current.imageId && imageMap[current.imageId] ? (
-              <img src={imageMap[current.imageId]} alt="" className="absolute inset-0 size-full object-cover" />
-            ) : (
-              <div className="absolute inset-0" style={{ background: current.gradient }} />
-            )}
-            {current.role !== "cover" && <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-transparent" />}
-
-            {/* prev / next dots */}
-            <div className="absolute inset-x-0 bottom-1 flex justify-center gap-1">
-              {note.pageLayout.map((p) => (
-                <span
-                  key={p.index}
-                  className={`size-1.5 rounded-full ${
-                    p.index === pageIdx ? "bg-white" : "bg-white/40"
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* note body summary */}
-          <div className="px-4 py-3 text-foreground">
-            <div className="text-[13px] font-bold leading-snug line-clamp-2" data-testid="text-preview-title">
-              {note.title}
-            </div>
-            <div className="mt-1 text-[11px] text-muted-foreground leading-relaxed line-clamp-3" data-testid="text-preview-body">
-              {note.body.slice(0, 160)}…
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {note.tags.slice(0, 4).map((t) => (
-                <span key={t} className="text-[10px] text-primary">{t}</span>
-              ))}
-            </div>
-          </div>
-
-          {/* engagement bar */}
-          <div className="px-4 py-2 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span className="inline-flex items-center gap-1"><Heart className="size-3.5" /> 12.3k</span>
-            <span className="inline-flex items-center gap-1"><MessageCircle className="size-3.5" /> 482</span>
-            <span className="inline-flex items-center gap-1"><Bookmark className="size-3.5" /> 3.1k</span>
-            <span className="inline-flex items-center gap-1"><Share2 className="size-3.5" /> 分享</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-3 flex items-center justify-center gap-2">
-        <button
-          type="button"
-          onClick={onPrev}
-          className="size-9 inline-flex items-center justify-center rounded-full border border-border bg-card hover-elevate disabled:opacity-40"
-          disabled={pageIdx === 0}
-          data-testid="button-preview-prev"
-          aria-label="上一页"
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-        <div className="text-xs text-muted-foreground" data-testid="text-preview-pageinfo">
-          {pageIdx + 1} / {note.pageLayout.length}
-        </div>
-        <button
-          type="button"
-          onClick={onNext}
-          className="size-9 inline-flex items-center justify-center rounded-full border border-border bg-card hover-elevate disabled:opacity-40"
-          disabled={pageIdx === note.pageLayout.length - 1}
-          data-testid="button-preview-next"
-          aria-label="下一页"
-        >
-          <ChevronRight className="size-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function CoverArt({
-  note,
-  styleName,
-  current,
-  imageUrls,
-  textOffset,
-  onTextOffsetChange,
-  zoom,
-}: {
-  note: GeneratedNote;
-  styleName: string;
-  current: GeneratedNote["pageLayout"][number];
-  imageUrls: string[];
-  textOffset: { x: number; y: number };
-  onTextOffsetChange: (offset: { x: number; y: number }) => void;
-  zoom: number;
-}) {
-  const titleMain = note.title.split("｜")[0] || note.coverHeadline;
-  const [primary, secondary, tertiary] = imageUrls;
-  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
-    e.preventDefault();
-    const start = { x: e.clientX, y: e.clientY, ox: textOffset.x, oy: textOffset.y };
-    const move = (ev: PointerEvent) => {
-      onTextOffsetChange({
-        x: Math.max(-34, Math.min(34, start.ox + ev.clientX - start.x)),
-        y: Math.max(-40, Math.min(62, start.oy + ev.clientY - start.y)),
-      });
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  }
-  return (
-    <div className="absolute inset-0 overflow-hidden" style={{ background: current.gradient }} data-testid="cover-art">
-      <div className="absolute inset-0 bg-[#f6efe7]" />
-      <div className="absolute inset-2 rounded-[1.4rem] bg-[#b7c7dd] shadow-inner overflow-hidden">
-        {primary ? (
-          <img
-            src={primary}
-            alt=""
-            className="absolute inset-0 size-full object-cover"
-            style={{
-              transform: `scale(${zoom})`,
-              transformOrigin: "38.2% 38.2%",
-              objectPosition: "38% 42%",
-            }}
-          />
-        ) : (
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_30%,#e9f2ff_0,#88a9d2_38%,#4d6f9a_100%)]" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/22 via-transparent to-black/42" />
-        <div className="absolute left-[38.2%] top-0 h-full w-px bg-white/15" />
-        <div className="absolute left-0 top-[38.2%] h-px w-full bg-white/15" />
-        <div className="absolute left-3 top-3 flex gap-1">
-          <span className="size-2 rounded-full bg-yellow-300 shadow" />
-          <span className="size-2 rounded-full bg-orange-400 shadow" />
-        </div>
-        <div className="absolute right-3 top-3 rounded-full bg-white/30 px-2 py-0.5 text-[9px] font-bold text-white backdrop-blur">
-          NoteStay
-        </div>
-        <div
-          className="absolute inset-x-4 top-[14%] cursor-grab select-none rounded-2xl p-1 text-center active:cursor-grabbing"
-          data-testid="draggable-cover-title"
-          onPointerDown={startDrag}
-          style={{ transform: `translate(${textOffset.x}px, ${textOffset.y}px)` }}
-        >
-          <div className="text-[10px] uppercase tracking-[0.2em] text-white/85 drop-shadow">{styleName}</div>
-          <div className="mt-2 whitespace-pre-line text-[30px] font-black leading-[0.95] tracking-tight text-white drop-shadow-[0_4px_10px_rgba(0,0,0,.46)]">
-            {titleMain}
-          </div>
-          <div className="mx-auto mt-2 w-fit rounded-full bg-black/28 px-2 py-1 text-[9px] font-bold text-white/90 backdrop-blur">
-            拖动我调整封面标题
-          </div>
-        </div>
-        <div className="absolute left-[7%] right-[7%] bottom-[19%] grid grid-cols-[1fr_.82fr] gap-2">
-          <div className="aspect-[.72/1] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg">
-            {secondary ? (
-              <img src={secondary} alt="" className="size-full rounded-lg object-cover" style={{ objectPosition: "38% 50%" }} />
-            ) : (
-              <div className="size-full rounded-lg bg-white/45" />
-            )}
-          </div>
-          <div className="aspect-[.72/1] rounded-xl bg-white/25 p-1 backdrop-blur shadow-lg translate-y-6">
-            {tertiary ? (
-              <img src={tertiary} alt="" className="size-full rounded-lg object-cover" style={{ objectPosition: "62% 45%" }} />
-            ) : (
-              <div className="size-full rounded-lg bg-white/35" />
-            )}
-          </div>
-        </div>
-        <div className="absolute inset-x-4 bottom-5 flex items-center justify-between rounded-2xl bg-white/25 px-3 py-2 text-[10px] font-semibold text-white backdrop-blur">
-          <span>{note.coverSubline}</span>
-          <span>收藏攻略</span>
-        </div>
-      </div>
-    </div>
   );
 }
