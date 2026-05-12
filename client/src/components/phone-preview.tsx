@@ -247,19 +247,21 @@ export function PhonePreview({
             data-testid="phone-body-scroll"
           >
             <InlineEditable
-              className="text-[15px] font-bold leading-snug outline-none focus:bg-primary/5 rounded-md -mx-1 px-1"
+              className="text-[15px] font-bold leading-snug outline-none focus:bg-primary/5 rounded-md -mx-1 px-1 cursor-text"
               value={note.title}
               onChange={(v) => onTitleChange?.(v)}
               placeholder="编辑标题"
               singleLine
               testId="phone-edit-title"
+              title="双击或单击进入编辑"
             />
             <InlineEditable
-              className="mt-2 text-[12px] leading-relaxed whitespace-pre-line text-foreground/90 outline-none focus:bg-primary/5 rounded-md -mx-1 px-1"
+              className="mt-2 text-[12px] leading-relaxed whitespace-pre-line text-foreground/90 outline-none focus:bg-primary/5 rounded-md -mx-1 px-1 cursor-text"
               value={note.body}
               onChange={(v) => onBodyChange?.(v)}
               placeholder="编辑正文"
               testId="phone-edit-body"
+              title="双击或单击进入编辑"
             />
             <div className="mt-3 flex flex-wrap gap-1.5">
               {note.tags.map((t) => (
@@ -283,7 +285,7 @@ export function PhonePreview({
 
       <p className="mt-3 text-center text-[11px] text-muted-foreground">
         左右滑动切换图片页 · 当前第 {Math.max(0, pages.findIndex((p) => p.index === selectedPageIndex)) + 1} /
-        {pages.length} 张 · 点击标题或正文可直接编辑
+        {pages.length} 张 · 双击标题/正文进入编辑
       </p>
     </div>
   );
@@ -302,6 +304,9 @@ function clamp(n: number, lo: number, hi: number): number {
 }
 
 // Contenteditable wrapper that commits on blur and supports multi-line text.
+// Double-clicking focuses the field and selects all so the user sees they are
+// in edit mode immediately. Single-clicking also focuses (standard
+// contentEditable behavior) — both gestures work.
 function InlineEditable({
   value,
   onChange,
@@ -309,6 +314,7 @@ function InlineEditable({
   placeholder,
   singleLine,
   testId,
+  title,
 }: {
   tag?: "div" | "span";
   value: string;
@@ -317,6 +323,7 @@ function InlineEditable({
   placeholder?: string;
   singleLine?: boolean;
   testId?: string;
+  title?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -336,6 +343,17 @@ function InlineEditable({
     if (next !== value) onChange(next);
   }
 
+  function selectAll() {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }
+
   return (
     <div
       ref={ref}
@@ -343,6 +361,7 @@ function InlineEditable({
       suppressContentEditableWarning
       className={className}
       onBlur={commit}
+      onDoubleClick={selectAll}
       onKeyDown={(e) => {
         if (singleLine && e.key === "Enter") {
           e.preventDefault();
@@ -353,6 +372,7 @@ function InlineEditable({
       data-placeholder={placeholder}
       role="textbox"
       aria-label={placeholder}
+      title={title}
     />
   );
 }

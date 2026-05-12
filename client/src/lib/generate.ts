@@ -708,13 +708,8 @@ export function generateNote(input: AppInputState): GeneratedNote {
     pageIdx += 2;
   }
 
-  // 7) Sticker copy + cover sub
-  const stickerCopy = [
-    `${style.emojiSet[0] ?? "✨"} ${pick(style.toneAdjectives, seed + 2)}入住`,
-    city ? `📍${city}` : "📍坐标随手记",
-    price ? `💰 ${price}` : "💰 价格待补充",
-    roomType ? `🛏️ ${roomType}` : "🛏️ 房型见正文",
-  ];
+  // 7) Cover subline only — sticker auto-population removed entirely.
+  // Users add stickers manually via the editor preset library if they want any.
   const coverSubline = hotelName
     ? `${hotelName}${city ? ` · ${city}` : ""}`
     : city
@@ -731,21 +726,9 @@ export function generateNote(input: AppInputState): GeneratedNote {
     seed,
   });
 
-  // Build default stickers. Only the cover gets an auto sticker — non-cover
-  // image pages must stay clean photo-only by default. Users can still add
-  // stickers manually in the editor.
-  const stickers: StickerOverlay[] = stickerCopy.slice(0, 1).map((text, i) => ({
-    id: `stk_${seed}_${i}`,
-    pageIndex: 0,
-    text,
-    x: 12,
-    y: 8,
-    rotation: -4,
-    font: "marker",
-    color: "#ffffff",
-    background: "rgba(0,0,0,0.45)",
-    fontSize: 14,
-  }));
+  // No default stickers — cover and inner pages stay clean photo/design by
+  // default. Users can pick from the preset sticker library in the editor.
+  const stickers: StickerOverlay[] = [];
 
   // Build per-page designs: page 0 = cover (already built); inner pages = scene designs
   const pageDesigns: Record<number, PageDesign> = { 0: cover };

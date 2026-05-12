@@ -9,6 +9,7 @@ import type {
   StickerOverlay,
 } from "@/lib/types";
 import { STICKER_FONT_LIST, fontFamilyFor } from "@/lib/sticker-fonts";
+import { STICKER_PRESETS, type StickerPreset } from "@/lib/sticker-presets";
 import {
   Trash2,
   Image as ImageIcon,
@@ -43,6 +44,8 @@ interface Props {
   testIdPrefix?: string;
 }
 
+type EdgeSide = "left" | "right" | "top" | "bottom";
+
 type DragState =
   | { kind: "move"; layerId: string; startX: number; startY: number; origX: number; origY: number }
   | {
@@ -56,7 +59,18 @@ type DragState =
       origH: number;
       origRot: number;
     }
-  | { kind: "imgpan"; layerId: string; startX: number; startY: number; origOX: number; origOY: number };
+  | { kind: "imgpan"; layerId: string; startX: number; startY: number; origOX: number; origOY: number }
+  | {
+      kind: "edge";
+      layerId: string;
+      side: EdgeSide;
+      startX: number;
+      startY: number;
+      origX: number;
+      origY: number;
+      origW: number;
+      origH: number;
+    };
 
 type StickerDrag =
   | { kind: "move"; id: string; startX: number; startY: number; origX: number; origY: number }
@@ -89,10 +103,12 @@ export function PageEditor({
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingImageId, setEditingImageId] = useState<string | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
   const [stickerDrag, setStickerDrag] = useState<StickerDrag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const stageH = Math.round((width * 4) / 3);
 
   const selected = design.layers.find((l) => l.id === selectedId) || null;
@@ -102,6 +118,10 @@ export function PageEditor({
   useEffect(() => {
     if (!selected && !selectedSticker) setSettingsOpen(false);
   }, [selected, selectedSticker]);
+  // Exit inline text edit mode when the selected layer changes.
+  useEffect(() => {
+    if (!selected || selected.id !== editingTextId) setEditingTextId(null);
+  }, [selected, editingTextId]);
 
   const updateLayer = useCallback(
     (id: string, patch: Partial<CoverLayer>) => {
@@ -179,6 +199,31 @@ export function PageEditor({
           offsetX: clamp(drag.origOX - dxPct * 0.6, 0, 100),
           offsetY: clamp(drag.origOY - dyPct * 0.6, 0, 100),
         });
+      } else if (drag.kind === "edge") {
+        // Edge-based cropping: dragging an edge re-shapes the layer frame
+        // while the inner image keeps object-fit cover, so the image is
+        // visually cropped to the new frame without overflowing.
+        const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
+        const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
+        // Minimum frame size in % of page (keeps the layer pickable).
+        const MIN = 6;
+        if (drag.side === "left") {
+          const maxDx = drag.origW - MIN;
+          const d = clamp(dxPct, -drag.origX, maxDx);
+          updateLayer(drag.layerId, { x: drag.origX + d, w: drag.origW - d });
+        } else if (drag.side === "right") {
+          const maxRight = 100 - drag.origX;
+          const d = clamp(dxPct, -(drag.origW - MIN), maxRight - drag.origW);
+          updateLayer(drag.layerId, { w: drag.origW + d });
+        } else if (drag.side === "top") {
+          const maxDy = drag.origH - MIN;
+          const d = clamp(dyPct, -drag.origY, maxDy);
+          updateLayer(drag.layerId, { y: drag.origY + d, h: drag.origH - d });
+        } else {
+          const maxBottom = 100 - drag.origY;
+          const d = clamp(dyPct, -(drag.origH - MIN), maxBottom - drag.origH);
+          updateLayer(drag.layerId, { h: drag.origH + d });
+        }
       }
     }
     function up() {
@@ -293,6 +338,22 @@ export function PageEditor({
       startY: e.clientY,
       origOX: l.offsetX,
       origOY: l.offsetY,
+    });
+  }
+  function startEdgeDrag(e: React.PointerEvent, l: CoverImageLayer, side: EdgeSide) {
+    e.stopPropagation();
+    setSelectedId(l.id);
+    setSelectedStickerId(null);
+    setDrag({
+      kind: "edge",
+      layerId: l.id,
+      side,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: l.x,
+      origY: l.y,
+      origW: l.w,
+      origH: l.h,
     });
   }
 
@@ -414,25 +475,26 @@ export function PageEditor({
   }, [editingImageId, design.layers, updateLayer]);
 
   // Stickers
-  function addSticker() {
+  function addSticker(preset?: StickerPreset) {
     const id = `stk_${Date.now()}`;
     onChangeStickers([
       ...stickers,
       {
         id,
         pageIndex: page.index,
-        text: "添加文字",
+        text: preset?.text ?? "添加文字",
         x: 30,
         y: 30,
-        rotation: 0,
-        font: "marker",
-        color: "#ffffff",
-        background: "rgba(232,89,107,0.85)",
-        fontSize: 16,
+        rotation: preset?.rotation ?? 0,
+        font: preset?.font ?? "marker",
+        color: preset?.color ?? "#ffffff",
+        background: preset?.background ?? "rgba(232,89,107,0.85)",
+        fontSize: preset?.fontSize ?? 16,
       },
     ]);
     setSelectedStickerId(id);
     setSelectedId(null);
+    setPresetsOpen(false);
   }
   function updateSticker(id: string, patch: Partial<StickerOverlay>) {
     onChangeStickers(stickers.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -489,6 +551,7 @@ export function PageEditor({
           setSelectedId(null);
           setSelectedStickerId(null);
           setEditingImageId(null);
+          setEditingTextId(null);
         }}
         data-testid={`${testIdPrefix}-stage`}
       >
@@ -602,6 +665,26 @@ export function PageEditor({
                         }}
                         testId={`${testIdPrefix}-corner-transform-${l.id}`}
                       />
+                      <EdgeCropHandle
+                        side="left"
+                        onPointerDown={(e) => startEdgeDrag(e, l, "left")}
+                        testId={`${testIdPrefix}-crop-left-${l.id}`}
+                      />
+                      <EdgeCropHandle
+                        side="right"
+                        onPointerDown={(e) => startEdgeDrag(e, l, "right")}
+                        testId={`${testIdPrefix}-crop-right-${l.id}`}
+                      />
+                      <EdgeCropHandle
+                        side="top"
+                        onPointerDown={(e) => startEdgeDrag(e, l, "top")}
+                        testId={`${testIdPrefix}-crop-top-${l.id}`}
+                      />
+                      <EdgeCropHandle
+                        side="bottom"
+                        onPointerDown={(e) => startEdgeDrag(e, l, "bottom")}
+                        testId={`${testIdPrefix}-crop-bottom-${l.id}`}
+                      />
                       {isImageEditing && (
                         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white whitespace-nowrap">
                           <Move className="size-3" /> 拖动 / 滚轮缩放
@@ -613,6 +696,7 @@ export function PageEditor({
               );
             }
             // text
+            const isTextEditing = editingTextId === l.id;
             return (
               <div
                 key={l.id}
@@ -629,28 +713,36 @@ export function PageEditor({
                   background: l.background ?? "transparent",
                   borderRadius: 14,
                   padding: "6px 10px",
-                  outline: isSelected ? "2px dashed #fff" : "none",
+                  outline: isSelected
+                    ? isTextEditing
+                      ? "2px solid #fde68a"
+                      : "2px dashed #fff"
+                    : "none",
                   outlineOffset: 2,
+                  cursor: isTextEditing ? "text" : "grab",
                 }}
                 data-testid={`${testIdPrefix}-layer-${l.id}`}
-                onPointerDown={(e) => startMove(e, l)}
+                onPointerDown={(e) => {
+                  if (isTextEditing) {
+                    e.stopPropagation();
+                    return;
+                  }
+                  startMove(e, l);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedId(l.id);
+                  setSelectedStickerId(null);
+                  setEditingTextId(l.id);
+                }}
               >
-                <div
-                  style={{
-                    color: l.color,
-                    fontSize: l.fontSize,
-                    fontWeight: l.fontWeight,
-                    fontFamily: fontFamilyFor(l.font),
-                    lineHeight: 1.05,
-                    textAlign: l.align,
-                    width: "100%",
-                    whiteSpace: "pre-wrap",
-                    textShadow: l.shadow ? "0 2px 8px rgba(0,0,0,0.45)" : "none",
-                    pointerEvents: "none",
-                  }}
-                >
-                  {l.text}
-                </div>
+                <EditableTextContent
+                  layer={l}
+                  editing={isTextEditing}
+                  onChange={(t) => updateLayer(l.id, { text: t })}
+                  onExit={() => setEditingTextId((s) => (s === l.id ? null : s))}
+                  testId={`${testIdPrefix}-text-inline-${l.id}`}
+                />
                 {isSelected && (
                   <>
                     <CornerButton
@@ -789,10 +881,23 @@ export function PageEditor({
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
-          onClick={addSticker}
+          onClick={() => addSticker()}
           data-testid={`${testIdPrefix}-add-sticker`}
         >
           <Sticker className="size-3.5" /> 添加贴纸
+        </button>
+        <button
+          type="button"
+          className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 ${
+            presetsOpen
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border bg-card hover-elevate"
+          }`}
+          onClick={() => setPresetsOpen((v) => !v)}
+          data-testid={`${testIdPrefix}-toggle-sticker-presets`}
+          aria-expanded={presetsOpen}
+        >
+          <Sticker className="size-3.5" /> 贴纸模板
         </button>
         <label
           className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate cursor-pointer"
@@ -837,6 +942,51 @@ export function PageEditor({
           </>
         )}
       </div>
+
+      {presetsOpen && (
+        <div
+          className="rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-2"
+          data-testid={`${testIdPrefix}-sticker-presets`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="font-semibold inline-flex items-center gap-1">
+              <Sticker className="size-3.5" /> 贴纸模板 · 小红书风
+            </div>
+            <button
+              type="button"
+              onClick={() => setPresetsOpen(false)}
+              className="rounded-full border border-border px-2 py-0.5 hover-elevate inline-flex items-center gap-1"
+              data-testid={`${testIdPrefix}-sticker-presets-close`}
+            >
+              <X className="size-3" /> 收起
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {STICKER_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => addSticker(p)}
+                className="rounded-full border border-border bg-background px-2 py-1 hover-elevate inline-flex items-center gap-1"
+                style={{
+                  color: p.color,
+                  background: p.background ?? undefined,
+                  fontFamily: fontFamilyFor(p.font),
+                  borderColor: "rgba(0,0,0,0.1)",
+                  transform: `rotate(${Math.max(-6, Math.min(6, p.rotation))}deg)`,
+                }}
+                data-testid={`${testIdPrefix}-sticker-preset-${p.key}`}
+                title={`使用「${p.label}」模板`}
+              >
+                {p.text}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            选中模板后即可像普通贴纸一样修改文字、字体、颜色与位置。
+          </p>
+        </div>
+      )}
 
       {/* Settings panel: hidden until user clicks the bottom-left settings on a layer */}
       {settingsOpen && selected ? (
@@ -1071,6 +1221,145 @@ function TransformHandle({
     >
       <RotateCcw className="size-3 text-primary" />
     </button>
+  );
+}
+
+function EdgeCropHandle({
+  side,
+  onPointerDown,
+  testId,
+}: {
+  side: EdgeSide;
+  onPointerDown: (e: React.PointerEvent) => void;
+  testId: string;
+}) {
+  // Thin, visible bar sitting on the layer's edge. Drag it along the
+  // perpendicular axis to crop. Hit area is larger than the visible bar.
+  const isH = side === "left" || side === "right";
+  const style: React.CSSProperties = {
+    position: "absolute",
+    zIndex: 4,
+    background: "transparent",
+    border: "none",
+    touchAction: "none",
+    padding: 0,
+  };
+  if (isH) {
+    style.top = "20%";
+    style.bottom = "20%";
+    style.width = 14;
+    style.cursor = "ew-resize";
+    if (side === "left") style.left = -7;
+    else style.right = -7;
+  } else {
+    style.left = "20%";
+    style.right = "20%";
+    style.height = 14;
+    style.cursor = "ns-resize";
+    if (side === "top") style.top = -7;
+    else style.bottom = -7;
+  }
+  const barInner: React.CSSProperties = isH
+    ? {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: 4,
+        borderRadius: 2,
+        background: "rgba(255,255,255,0.85)",
+        boxShadow: "0 0 0 1px rgba(0,0,0,0.25)",
+      }
+    : {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        top: "50%",
+        transform: "translateY(-50%)",
+        height: 4,
+        borderRadius: 2,
+        background: "rgba(255,255,255,0.85)",
+        boxShadow: "0 0 0 1px rgba(0,0,0,0.25)",
+      };
+  return (
+    <button
+      type="button"
+      style={style}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onPointerDown(e);
+      }}
+      onClick={(e) => e.stopPropagation()}
+      data-testid={testId}
+      title="拖动边缘可裁切图片"
+      aria-label="边缘裁切"
+    >
+      <span style={barInner} />
+    </button>
+  );
+}
+
+function EditableTextContent({
+  layer,
+  editing,
+  onChange,
+  onExit,
+  testId,
+}: {
+  layer: CoverTextLayer;
+  editing: boolean;
+  onChange: (text: string) => void;
+  onExit: () => void;
+  testId: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.innerText !== layer.text) {
+      el.innerText = layer.text;
+    }
+    if (editing) {
+      el.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  }, [editing, layer.text]);
+  return (
+    <div
+      ref={ref}
+      contentEditable={editing}
+      suppressContentEditableWarning
+      style={{
+        color: layer.color,
+        fontSize: layer.fontSize,
+        fontWeight: layer.fontWeight,
+        fontFamily: fontFamilyFor(layer.font),
+        lineHeight: 1.05,
+        textAlign: layer.align,
+        width: "100%",
+        whiteSpace: "pre-wrap",
+        textShadow: layer.shadow ? "0 2px 8px rgba(0,0,0,0.45)" : "none",
+        outline: "none",
+        cursor: editing ? "text" : undefined,
+        pointerEvents: editing ? "auto" : "none",
+      }}
+      onBlur={(e) => {
+        const next = (e.currentTarget as HTMLDivElement).innerText;
+        if (next !== layer.text) onChange(next);
+        onExit();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          (e.currentTarget as HTMLDivElement).blur();
+        }
+      }}
+      data-testid={testId}
+    />
   );
 }
 

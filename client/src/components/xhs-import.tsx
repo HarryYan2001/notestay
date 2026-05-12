@@ -1,8 +1,36 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GeneratedNote } from "@/lib/types";
-import { Check, ExternalLink, Info, AlertTriangle, Download, Loader2 } from "lucide-react";
+import {
+  Check,
+  ExternalLink,
+  Info,
+  AlertTriangle,
+  Download,
+  Loader2,
+  Wrench,
+  Copy,
+  RefreshCw,
+  X,
+} from "lucide-react";
 
 const XHS_CREATOR_URL = "https://creator.xiaohongshu.com/publish/publish?source=web";
+// Alternate landing URLs we can hand the user when the primary creator URL
+// is blocked, hijacked, or otherwise unreachable. These are all official
+// Xiaohongshu publish/upload entrypoints.
+const XHS_FALLBACK_URLS: { label: string; url: string }[] = [
+  { label: "创作中心 · 发布", url: XHS_CREATOR_URL },
+  { label: "创作服务平台首页", url: "https://creator.xiaohongshu.com/" },
+  { label: "小红书首页(从顶部「发布笔记」进入)", url: "https://www.xiaohongshu.com/" },
+];
+
+type ImportStatus =
+  | "idle"
+  | "copying"
+  | "done"
+  | "popup_blocked"
+  | "copy_blocked"
+  | "nav_unreachable"
+  | "error";
 
 interface Props {
   note: GeneratedNote;
@@ -12,9 +40,11 @@ interface Props {
 }
 
 export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: Props) {
-  const [status, setStatus] = useState<"idle" | "copying" | "done" | "error">("idle");
+  const [status, setStatus] = useState<ImportStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [showManualCopy, setShowManualCopy] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [copyOk, setCopyOk] = useState(false);
+  const openedWindowRef = useRef<Window | null>(null);
 
   function buildClipboardPayload(): string {
     const tagLine = note.tags
@@ -59,37 +89,112 @@ export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: 
     return copied;
   }
 
+  // Verify that the popup we opened is still live shortly after spawning. Some
+  // browsers / extensions / corp proxies allow window.open() to succeed but
+  // then close or hijack the new tab. If after ~1.2s the window is gone
+  // without our intervention, treat this as nav_unreachable and surface the
+  // repair panel so the user has a manual fallback.
+  function watchPopupHealth(w: Window | null) {
+    if (!w) return;
+    openedWindowRef.current = w;
+    let elapsed = 0;
+    const interval = window.setInterval(() => {
+      elapsed += 400;
+      if (!openedWindowRef.current) {
+        window.clearInterval(interval);
+        return;
+      }
+      const dead = openedWindowRef.current.closed;
+      if (dead) {
+        window.clearInterval(interval);
+        // If the user closed it intentionally after status="done", leave
+        // status alone. If it dies within the first 1.2s, treat as unreachable.
+        if (elapsed <= 1200 && status !== "done") {
+          setStatus("nav_unreachable");
+          setRepairOpen(true);
+        }
+        openedWindowRef.current = null;
+      }
+      if (elapsed >= 1600) {
+        window.clearInterval(interval);
+      }
+    }, 400);
+  }
+
+  useEffect(() => {
+    return () => {
+      openedWindowRef.current = null;
+    };
+  }, []);
+
   async function handleOneClick() {
     setError(null);
-    setShowManualCopy(false);
+    setRepairOpen(false);
+    setCopyOk(false);
     setStatus("copying");
     const payload = buildClipboardPayload();
 
     let opened = false;
+    let popup: Window | null = null;
     try {
-      const w = window.open(XHS_CREATOR_URL, "_blank", "noopener,noreferrer");
-      opened = Boolean(w);
+      popup = window.open(XHS_CREATOR_URL, "_blank", "noopener,noreferrer");
+      opened = Boolean(popup);
     } catch {
       opened = false;
     }
 
     const copied = await copyPayload(payload);
-    if (!copied) {
+    setCopyOk(copied);
+
+    if (!opened && !copied) {
       setStatus("error");
-      setShowManualCopy(true);
-      setError(
-        opened
-          ? "已尝试打开小红书发布页,但浏览器没有允许自动复制。请使用下方文本框手动复制后粘贴。"
-          : "浏览器拦截了新标签页,也没有允许自动复制。请使用下方文本框手动复制,并自行打开小红书发布页。",
-      );
+      setRepairOpen(true);
+      setError("浏览器同时拦截了新标签页和自动复制。请使用下方修复面板手动操作。");
       return;
     }
-
     if (!opened) {
-      setError("文案已复制,但浏览器拦截了新标签页。请手动打开小红书创作中心粘贴。");
+      setStatus("popup_blocked");
+      setRepairOpen(true);
+      setError("文案已复制,但浏览器拦截了新标签页。请使用下方修复面板手动打开小红书发布页。");
+      return;
+    }
+    if (!copied) {
+      setStatus("copy_blocked");
+      setRepairOpen(true);
+      setError("已尝试打开小红书发布页,但浏览器未允许自动复制。请使用下方修复面板手动复制文案。");
+      watchPopupHealth(popup);
+      return;
     }
     setStatus("done");
+    watchPopupHealth(popup);
   }
+
+  async function retryCopy() {
+    setError(null);
+    const ok = await copyPayload(buildClipboardPayload());
+    setCopyOk(ok);
+    if (ok && (status === "copy_blocked" || status === "popup_blocked")) {
+      // Promote to a partial success — clipboard works, user may still need
+      // to open the tab themselves.
+      setError(null);
+    }
+  }
+
+  function manualOpen(url: string) {
+    try {
+      const w = window.open(url, "_blank", "noopener,noreferrer");
+      if (w) {
+        if (copyOk) setStatus("done");
+        watchPopupHealth(w);
+      } else {
+        setError("再次尝试打开新标签页仍被拦截。请复制下方链接并自行粘贴到地址栏。");
+      }
+    } catch {
+      setError("浏览器禁止本页打开新窗口,请复制下方链接到地址栏访问。");
+    }
+  }
+
+  const showRepair = repairOpen || status === "error" || status === "nav_unreachable" || status === "popup_blocked" || status === "copy_blocked";
 
   return (
     <section
@@ -138,6 +243,15 @@ export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: 
           )}
           {status === "done" ? "已复制 · 已打开小红书" : "一键导入小红书"}
         </button>
+        <button
+          type="button"
+          onClick={() => setRepairOpen((v) => !v)}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-border bg-card text-sm hover-elevate"
+          data-testid="button-xhs-toggle-repair"
+          aria-expanded={repairOpen}
+        >
+          <Wrench className="size-4" /> {repairOpen ? "收起跳转修复" : "跳转修复"}
+        </button>
       </div>
 
       {status === "done" && !error && (
@@ -161,16 +275,113 @@ export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: 
         </div>
       )}
 
-      {showManualCopy && (
-        <div className="space-y-2" data-testid="xhs-manual-copy-block">
-          <p className="text-xs font-medium text-foreground">手动复制内容</p>
-          <textarea
-            readOnly
-            value={buildClipboardPayload()}
-            className="min-h-40 w-full rounded-xl border border-border bg-background p-3 text-xs leading-relaxed text-foreground"
-            data-testid="textarea-xhs-manual-copy"
-            onFocus={(event) => event.currentTarget.select()}
-          />
+      {showRepair && (
+        <div
+          className="rounded-xl border border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4 space-y-3"
+          data-testid="xhs-repair-panel"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-xs font-semibold text-amber-700 dark:text-amber-200 inline-flex items-center gap-1.5">
+              <Wrench className="size-3.5" /> 跳转修复 · 自助恢复导入
+            </div>
+            <button
+              type="button"
+              onClick={() => setRepairOpen(false)}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] hover-elevate"
+              data-testid="button-xhs-repair-close"
+            >
+              <X className="size-3" /> 收起
+            </button>
+          </div>
+          <p className="text-[11px] text-amber-800 dark:text-amber-200/90 leading-relaxed">
+            如果一键导入没有成功,可能是浏览器拦截了弹窗、扩展屏蔽了跳转、或者公司网络无法访问小红书。
+            下面提供完整的备用方案,任选一项即可继续完成发布:
+          </p>
+
+          <div className="space-y-1.5" data-testid="xhs-repair-step-copy">
+            <div className="text-[11px] font-semibold text-foreground">① 手动复制文案</div>
+            <textarea
+              readOnly
+              value={buildClipboardPayload()}
+              className="min-h-32 w-full rounded-xl border border-border bg-background p-3 text-xs leading-relaxed text-foreground"
+              data-testid="textarea-xhs-manual-copy"
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={retryCopy}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate"
+                data-testid="button-xhs-retry-copy"
+              >
+                <Copy className="size-3" /> 再次尝试自动复制
+              </button>
+              {copyOk && (
+                <span className="text-[11px] text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1">
+                  <Check className="size-3" /> 已复制到剪贴板
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5" data-testid="xhs-repair-step-open">
+            <div className="text-[11px] font-semibold text-foreground">② 选择一个备用入口手动打开</div>
+            <div className="flex flex-wrap gap-2">
+              {XHS_FALLBACK_URLS.map((u) => (
+                <button
+                  key={u.url}
+                  type="button"
+                  onClick={() => manualOpen(u.url)}
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate"
+                  data-testid={`button-xhs-open-${u.label}`}
+                  title={u.url}
+                >
+                  <ExternalLink className="size-3" /> {u.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={handleOneClick}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate"
+                data-testid="button-xhs-retry-oneclick"
+              >
+                <RefreshCw className="size-3" /> 重新一键导入
+              </button>
+            </div>
+            <div className="text-[10px] text-muted-foreground leading-relaxed">
+              提示:也可以复制以下任一链接,粘贴到浏览器地址栏后回车:
+            </div>
+            <ul className="text-[10px] text-muted-foreground space-y-0.5 break-all">
+              {XHS_FALLBACK_URLS.map((u) => (
+                <li key={u.url} data-testid={`xhs-fallback-url-${u.label}`}>
+                  · {u.url}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="space-y-1.5" data-testid="xhs-repair-step-download">
+            <div className="text-[11px] font-semibold text-foreground">③ 仍打不开?先把图片下载到本地备用</div>
+            {onDownloadAllZip && (
+              <button
+                type="button"
+                onClick={() => onDownloadAllZip?.()}
+                disabled={downloading}
+                className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate disabled:opacity-60"
+                data-testid="button-xhs-repair-download"
+              >
+                {downloading ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Download className="size-3" />
+                )}
+                {downloading ? "正在导出图片…" : "立即导出编辑好的图片"}
+              </button>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              把图片先保存下来,稍后用小红书 App 或换一台设备登录后,再粘贴上方文案、上传图片即可。
+            </p>
+          </div>
         </div>
       )}
 
@@ -179,7 +390,7 @@ export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: 
         受浏览器同源策略与小红书登录态保护,网页版无法直接代你完成填表与发布。
         我们的导入方案是:本地复制全部文案 + 自动打开小红书创作中心,
         其余步骤(粘贴文案、上传图片、点击发布)在小红书页面内完成,信息不会被本应用上传。
-        如需真正全自动,请使用支持 Manifest V3 的浏览器扩展(参考素材见 page-bridge / xhs 脚本)。
+        如新标签页或自动复制被拦截,点击「跳转修复」按钮可获得手动备用流程。
       </div>
     </section>
   );
