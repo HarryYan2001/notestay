@@ -61,6 +61,30 @@ assert(
   "panEditing toggle in image layer panel must remain",
 );
 
+// Double-clicking the same image again must toggle adjustment mode off
+// (in addition to the existing stage / outside-click exits). Look for the
+// functional-setState toggle pattern in the image layer's onDoubleClick.
+assert(
+  src.includes("setEditingImageId((prev) => (prev === l.id ? null : l.id))"),
+  "double-clicking the same image must toggle editingImageId off",
+);
+
+// The helper copy at the top of the editor must mention the new
+// "double-click again to exit" affordance so users know about it.
+assert(
+  src.includes("再次双击图片或点击空白处退出"),
+  "helper text must mention 'double-click image again or click blank to exit'",
+);
+// The old copy that only mentioned blank-click must be gone.
+assert(
+  !src.includes("双击图片进入裁切模式(滚轮缩放),点击空白处退出"),
+  "old top helper copy without the double-click-again hint must be replaced",
+);
+assert(
+  !src.includes("双击图片进入裁切模式(滚轮缩放,点击空白处退出),双击文字"),
+  "old long helper copy without the double-click-again hint must be replaced",
+);
+
 // Edge-to-edge cover guarantee: the image layer must always fill its module
 // frame. Render must clamp zoom at >= 1 (combined with object-fit cover this
 // prevents the page background from peeking inside the layer), and the
