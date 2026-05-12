@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { useApp } from "@/lib/app-state";
 import { STYLES, STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
-import type { GeneratedNote, PageDesign, StickerOverlay } from "@/lib/types";
+import type { GeneratedNote, PageDesign, PageLayout, StickerOverlay } from "@/lib/types";
 import { PageEditor } from "@/components/page-editor";
 import { PageFlat } from "@/components/page-flat";
 import { PhonePreview } from "@/components/phone-preview";
@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   AlertTriangle,
   Sparkles,
+  Plus,
 } from "lucide-react";
 
 const EXPORT_WIDTH = 720; // px (3:4 aspect → 720x960)
@@ -68,6 +69,45 @@ export default function ResultPage() {
   }
   function updateStickers(next: StickerOverlay[]) {
     updateNote({ stickers: next });
+  }
+
+  // Append a new blank image page to the deck. Each click creates exactly one
+  // new page that is image/background-only — a gradient placeholder, no text,
+  // no stickers. The new page is appended after the last existing page,
+  // becomes selectable, and is automatically picked up by phone preview and
+  // export because they read from note.pageLayout / note.pageDesigns.
+  function addBlankPage() {
+    if (!app.generated) return;
+    const style = STYLES[app.generated.styleKey];
+    const palette = style.palette;
+    const existingIndices = app.generated.pageLayout.map((p) => p.index);
+    const nextIndex = (existingIndices.length ? Math.max(...existingIndices) : 0) + 1;
+    const ord = app.generated.pageLayout.length;
+    const angles = [135, 160, 110, 200, 45];
+    const ang = angles[ord % angles.length];
+    const a = palette[ord % palette.length];
+    const b = palette[(ord + 1) % palette.length];
+    const c = palette[(ord + 2) % palette.length];
+    const gradient = `linear-gradient(${ang}deg, ${a} 0%, ${b} 55%, ${c} 100%)`;
+    const newPage: PageLayout = {
+      index: nextIndex,
+      role: "custom",
+      headline: "",
+      caption: "",
+      gradient,
+    };
+    const newDesign: PageDesign = {
+      background: gradient,
+      bgImageUrl: null,
+      layers: [],
+    };
+    const next: GeneratedNote = {
+      ...app.generated,
+      pageLayout: [...app.generated.pageLayout, newPage],
+      pageDesigns: { ...app.generated.pageDesigns, [nextIndex]: newDesign },
+    };
+    app.setGenerated(next);
+    setSelectedPageIndex(nextIndex);
   }
 
   function copy(label: string, text: string) {
@@ -312,8 +352,18 @@ export default function ResultPage() {
               />
               {/* Page picker */}
               <div className="mt-4">
-                <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">
-                  快速切换页面
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                    快速切换页面
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addBlankPage}
+                    className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 text-primary px-3 py-1 text-xs hover-elevate"
+                    data-testid="button-add-page"
+                  >
+                    <Plus className="size-3.5" /> 增加页面
+                  </button>
                 </div>
                 <div className="flex gap-2 overflow-x-auto pb-2 scroll-area-hide" data-testid="row-page-picker">
                   {note.pageLayout.map((p, i) => (

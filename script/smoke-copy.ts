@@ -165,8 +165,10 @@ function countCjk(text: string): number {
   assert(!note.body.includes("📝 笔记"), "generic label should not be promoted to its own heading");
 }
 
-// Case 8: 复核机制 — breakfast/coffee mistakenly filed under 服务 should be
-// moved into 🍳 早餐 by the review pass.
+// Case 8: framework mode preserves user-provided structure. A slot labeled
+// 服务 keeps its content (including any breakfast keywords) under 🛎️ 服务,
+// and is rendered in the user's input order — A mode never re-routes
+// content across sections.
 {
   const note = generateNote(
     baseInput({
@@ -176,19 +178,22 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- review pass: breakfast under 服务 ---");
+  console.log("--- framework fidelity: 服务 stays as 服务 ---");
   console.log(note.body);
-  assert(note.body.includes("🍳 早餐"), "review: breakfast content under 服务 should be moved to 🍳 早餐");
-  assert(note.body.includes("🛎️ 服务"), "review: 服务 section should remain for the front-desk sentence");
-  // The 服务 section must not still contain the breakfast sentence.
+  assert(note.body.includes("🛎️ 服务"), "framework: 服务 section should exist with user's label");
+  assert(note.body.includes("🛏️ 房间"), "framework: 房间 section should exist with user's label");
   const servicePart = note.body.split("🛎️ 服务")[1]?.split(/\n\n/)[0] ?? "";
-  assert(!servicePart.includes("早餐") && !servicePart.includes("咖啡"), "review: 服务 section must not retain breakfast/coffee");
+  assert(servicePart.includes("早餐") || servicePart.includes("咖啡") || servicePart.includes("前台"),
+    "framework: 服务 section must retain user content verbatim");
+  assert(!note.body.includes("🍳 早餐"), "framework: must NOT auto-create a separate 早餐 section");
+  assert(note.body.indexOf("🛎️ 服务") < note.body.indexOf("🛏️ 房间"),
+    "framework: section order must match the user's input order");
   for (const p of BANNED) assert(!note.body.includes(p), `body must not contain banned phrase: ${p}`);
   assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
 }
 
-// Case 9: 复核机制 — hygiene content mistakenly placed under 房间 should be
-// moved into 🧼 卫生.
+// Case 9: framework fidelity — content inside a 房间 slot stays whole even
+// when individual sentences would otherwise match different dimensions.
 {
   const note = generateNote(
     baseInput({
@@ -197,16 +202,17 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- review pass: hygiene under 房间 ---");
+  console.log("--- framework fidelity: hygiene stays inside 房间 slot ---");
   console.log(note.body);
-  assert(note.body.includes("🧼 卫生"), "review: hygiene sentence under 房间 should be moved to 🧼 卫生");
-  assert(note.body.includes("🛏️ 房间"), "review: 房间 section should remain for bed/window sentences");
+  assert(note.body.includes("🛏️ 房间"), "framework: 房间 section should exist");
+  assert(!note.body.includes("🧼 卫生"), "framework: must NOT auto-extract a 卫生 section from the user's 房间 slot");
   const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
-  assert(!roomPart.includes("卫生") && !roomPart.includes("干净"), "review: 房间 section must not retain hygiene content");
+  assert(roomPart.includes("床品") && roomPart.includes("干净"),
+    "framework: 房间 section must contain all of the user's original content");
 }
 
-// Case 10: 复核机制 — terrace sentence in generic 笔记 leftover should be
-// promoted into 🌿 露台.
+// Case 10: framework fidelity — generic 笔记 falls back to 📝 记一笔 and
+// keeps the user's content intact (no auto-extraction of dimensions).
 {
   const note = generateNote(
     baseInput({
@@ -215,11 +221,13 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- review pass: terrace in generic 笔记 ---");
+  console.log("--- framework fidelity: generic 笔记 keeps content ---");
   console.log(note.body);
-  assert(note.body.includes("🌿 露台"), "review: terrace sentence in generic 笔记 should be moved to 🌿 露台");
+  assert(note.body.includes("📝 记一笔"), "framework: generic 笔记 label should fall back to 📝 记一笔");
+  assert(!note.body.includes("🌿 露台"), "framework: must NOT auto-extract 露台 from a generic slot");
   const leftoverPart = note.body.split("📝 记一笔")[1]?.split(/\n\n/)[0] ?? "";
-  assert(!leftoverPart.includes("露台"), "review: 记一笔 leftover must not retain terrace content");
+  assert(leftoverPart.includes("露台") || leftoverPart.includes("整体"),
+    "framework: 记一笔 must retain the user's content");
 }
 
 // Case 11: 复核机制 — freeform mixed content should still split correctly,
@@ -244,11 +252,10 @@ function countCjk(text: string): number {
   assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
 }
 
-// Case 12: regression — room amenity sentence that mentions 茶包/咖啡 must NOT
-// be routed to 早餐. Reproduces a real screenshot where a 早餐 section
-// incorrectly absorbed "房间里还有大屏电视、小冰箱、免费矿泉水和茶包咖啡，
-// 办公区桌椅齐全，出差旅游都合适。" while the true breakfast sentence
-// belongs alone under 🍳 早餐.
+// Case 12: framework fidelity — content for two user-named slots (房间 and
+// 早餐) lands in their own sections in the user's order; 早餐 retains the
+// user's breakfast sentence, 房间 retains the user's amenity sentence, and
+// neither leaks into the other.
 {
   const note = generateNote(
     baseInput({
@@ -262,21 +269,23 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- regression: 茶包咖啡 must not route to 早餐 ---");
+  console.log("--- framework fidelity: 房间 + 早餐 preserved ---");
   console.log(note.body);
   const breakfastPart = note.body.split("🍳 早餐")[1]?.split(/\n\n/)[0] ?? "";
   const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
-  assert(!breakfastPart.includes("电视") && !breakfastPart.includes("冰箱") && !breakfastPart.includes("茶包咖啡"),
-    "regression: 早餐 section must not absorb room-amenity sentence with 茶包/咖啡");
-  assert(breakfastPart.includes("一楼餐厅") || breakfastPart.includes("鸡蛋") || breakfastPart.includes("包子"),
-    "regression: 早餐 section must contain the actual breakfast sentence");
   assert(roomPart.includes("电视") || roomPart.includes("冰箱") || roomPart.includes("茶包咖啡"),
-    "regression: 房间 section must contain the room-amenity sentence");
+    "framework: 房间 section must contain the user's amenity sentence");
+  assert(breakfastPart.includes("一楼餐厅") || breakfastPart.includes("鸡蛋") || breakfastPart.includes("包子"),
+    "framework: 早餐 section must contain the user's breakfast sentence");
+  assert(!breakfastPart.includes("电视") && !breakfastPart.includes("冰箱"),
+    "framework: 早餐 section must not absorb 房间's content");
+  assert(note.body.indexOf("🛏️ 房间") < note.body.indexOf("🍳 早餐"),
+    "framework: section order must match the user's input order");
 }
 
-// Case 13: regression — bathroom-facility sentence (干湿分离/热水/花洒/洗澡)
-// must NOT route to 卫生 (cleanliness). It should route to a dedicated
-// bathroom section (🚿 卫生间).
+// Case 13: framework fidelity — user's 卫生 slot is rendered as 🧼 卫生
+// regardless of whether the inner text mentions 卫生间, because A mode
+// preserves the user's chosen dimension label.
 {
   const note = generateNote(
     baseInput({
@@ -289,14 +298,18 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- regression: 卫生间/干湿分离 must not route to 卫生 ---");
+  console.log("--- framework fidelity: user's 卫生 label preserved ---");
   console.log(note.body);
-  assert(note.body.includes("🚿 卫生间"), "regression: bathroom-facility text should route to 🚿 卫生间");
-  assert(!note.body.includes("🧼 卫生"), "regression: bathroom-facility text must NOT create a 🧼 卫生 section");
+  assert(note.body.includes("🧼 卫生"), "framework: user's 卫生 label must render as 🧼 卫生");
+  assert(!note.body.includes("🚿 卫生间"), "framework: must not auto-create 卫生间 section from inside 卫生 slot");
+  const part = note.body.split("🧼 卫生")[1]?.split(/\n\n/)[0] ?? "";
+  assert(part.includes("干湿分离") || part.includes("花洒"),
+    "framework: 卫生 section must retain the user's bathroom-facility content");
 }
 
-// Case 14: regression — cleanliness sentence still routes to 卫生 (we did not
-// break the clean case).
+// Case 14: framework fidelity — a generic 笔记 label still falls back to
+// 📝 记一笔 and keeps the user's content verbatim (no auto-extraction into
+// dimension sections).
 {
   const note = generateNote(
     baseInput({
@@ -305,14 +318,18 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- regression: cleanliness still routes to 卫生 ---");
+  console.log("--- framework fidelity: generic 笔记 keeps cleanliness content ---");
   console.log(note.body);
-  assert(note.body.includes("🧼 卫生"), "regression: cleanliness sentence should still route to 🧼 卫生");
-  assert(!note.body.includes("🚿 卫生间"), "regression: pure cleanliness text should not route to 卫生间");
+  assert(note.body.includes("📝 记一笔"), "framework: 笔记 should fall back to 📝 记一笔");
+  assert(!note.body.includes("🧼 卫生"), "framework: must NOT auto-extract 卫生 section from 笔记 slot");
+  const part = note.body.split("📝 记一笔")[1]?.split(/\n\n/)[0] ?? "";
+  assert(part.includes("干净") || part.includes("一尘不染"),
+    "framework: 记一笔 must retain the user's cleanliness content");
 }
 
-// Case 15: regression — bed / mattress sentence must NOT be absorbed by 隔音.
-// It should route to 🛏️ 房间.
+// Case 15: framework fidelity — user's 隔音 label is preserved as 🤫 隔音
+// even when the content is really about bed comfort. A mode never moves
+// content between the user's chosen slots.
 {
   const note = generateNote(
     baseInput({
@@ -321,13 +338,15 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- regression: 床垫/床品 must not route to 隔音 ---");
+  console.log("--- framework fidelity: 隔音 label kept ---");
   console.log(note.body);
-  assert(!note.body.includes("🤫 隔音"), "regression: bed-comfort text must not create a 🤫 隔音 section");
-  assert(note.body.includes("🛏️ 房间"), "regression: bed-comfort text should route to 🛏️ 房间");
+  assert(note.body.includes("🤫 隔音"), "framework: user's 隔音 label must render as 🤫 隔音");
+  assert(!note.body.includes("🛏️ 房间"), "framework: must NOT extract a 房间 section from 隔音 slot");
 }
 
-// Case 16: regression — true noise sentence still routes to 隔音.
+// Case 16: framework fidelity — when the user uses a generic 笔记 label
+// with content about soundproofing, fallback is 📝 记一笔 (content is not
+// re-routed to 🤫 隔音).
 {
   const note = generateNote(
     baseInput({
@@ -336,13 +355,14 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- regression: real 隔音 still routes ---");
+  console.log("--- framework fidelity: generic 笔记 keeps soundproofing content ---");
   console.log(note.body);
-  assert(note.body.includes("🤫 隔音"), "regression: real noise/soundproofing should still route to 🤫 隔音");
+  assert(note.body.includes("📝 记一笔"), "framework: 笔记 should fall back to 📝 记一笔");
+  assert(!note.body.includes("🤫 隔音"), "framework: must NOT auto-extract 隔音 from 笔记 slot");
 }
 
-// Case 17: regression — review pass moves a bathroom-facility sentence out of
-// a generic 房间 slot into 🚿 卫生间.
+// Case 17: framework fidelity — user's 房间 slot keeps mixed content
+// (room + bathroom) together; A mode does not split across dimensions.
 {
   const note = generateNote(
     baseInput({
@@ -355,18 +375,17 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- review pass: bathroom sentence in 房间 ---");
+  console.log("--- framework fidelity: 房间 keeps bathroom sentence ---");
   console.log(note.body);
-  assert(note.body.includes("🚿 卫生间"), "review: bathroom sentence in 房间 should be moved to 🚿 卫生间");
+  assert(note.body.includes("🛏️ 房间"), "framework: 房间 section should exist");
+  assert(!note.body.includes("🚿 卫生间"), "framework: must NOT auto-extract a 卫生间 section");
   const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
-  assert(!roomPart.includes("干湿分离") && !roomPart.includes("花洒"),
-    "review: 房间 section must not retain bathroom-facility content");
+  assert(roomPart.includes("床") && (roomPart.includes("干湿分离") || roomPart.includes("花洒")),
+    "framework: 房间 section must contain all user content (including bathroom mention)");
 }
 
-// Case 18: clause-level splitting — a single sentence that mixes 房间 and
-// 卫生间 dimensions ("推开门是落地窗，床品柔软，洗手间干湿分离很舒服。")
-// must split on Chinese commas. 落地窗/床品 route to 🛏️ 房间; 洗手间干湿分离
-// routes to 🚿 卫生间. Reproduces a real generator misclassification.
+// Case 18: framework fidelity — mixed-dimension sentences inside the
+// user's 房间 slot stay together under 🛏️ 房间.
 {
   const note = generateNote(
     baseInput({
@@ -375,25 +394,17 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- clause-level: mixed 房间/卫生间 sentence ---");
+  console.log("--- framework fidelity: mixed sentence stays in 房间 ---");
   console.log(note.body);
-  assert(note.body.includes("🛏️ 房间"), "clause: should have 🛏️ 房间 section");
-  assert(note.body.includes("🚿 卫生间"), "clause: should have 🚿 卫生间 section");
+  assert(note.body.includes("🛏️ 房间"), "framework: 房间 section should exist");
+  assert(!note.body.includes("🚿 卫生间"), "framework: must NOT split 房间 into a 卫生间 section");
   const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
-  const bathPart = note.body.split("🚿 卫生间")[1]?.split(/\n\n/)[0] ?? "";
-  assert(roomPart.includes("落地窗") && roomPart.includes("床品"),
-    "clause: 房间 section must contain 落地窗 and 床品 clauses");
-  assert(!roomPart.includes("干湿分离"),
-    "clause: 房间 section must NOT contain 干湿分离");
-  assert(bathPart.includes("干湿分离") || bathPart.includes("洗手间"),
-    "clause: 卫生间 section must contain the bathroom clause");
-  assert(!bathPart.includes("落地窗") && !bathPart.includes("床品"),
-    "clause: 卫生间 section must NOT absorb the room clauses");
+  assert(roomPart.includes("落地窗") && roomPart.includes("洗手间"),
+    "framework: 房间 section must retain the entire user sentence");
 }
 
-// Case 19: clause-level splitting must NOT chop a single-dimension noun list.
-// "床很大，灯光也调得刚好，桌椅齐全。" is all 房间; it should stay as one
-// natural sentence in 🛏️ 房间.
+// Case 19: framework fidelity — a same-dimension sentence stays whole in
+// the user's slot.
 {
   const note = generateNote(
     baseInput({
@@ -402,12 +413,40 @@ function countCjk(text: string): number {
       ],
     }),
   );
-  console.log("--- clause-level: same-dimension noun list stays whole ---");
+  console.log("--- framework fidelity: same-dim noun list stays whole ---");
   console.log(note.body);
-  assert(note.body.includes("🛏️ 房间"), "clause: single-dim sentence should still land in 🛏️ 房间");
+  assert(note.body.includes("🛏️ 房间"), "framework: 房间 section should exist");
   const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
   assert(roomPart.includes("床") && roomPart.includes("灯光") && roomPart.includes("桌椅"),
     "clause: same-dimension noun list must stay together in one section");
+}
+
+// Case 20: non-cover pages must be photo-only by default — no text layers,
+// no auto-added stickers. The cover page is allowed to keep its design.
+{
+  const images = [
+    { id: "img1", url: "blob:test-1", name: "room.jpg", category: "房间" },
+    { id: "img2", url: "blob:test-2", name: "lobby.jpg", category: "大堂" },
+    { id: "img3", url: "blob:test-3", name: "breakfast.jpg", category: "早餐" },
+  ];
+  const note = generateNote(baseInput({ images }));
+  console.log("--- photo-only non-cover pages ---");
+  // Inner pages (index !== 0) must have no text layers in their design.
+  const innerPages = note.pageLayout.filter((p) => p.index !== 0);
+  assert(innerPages.length > 0, "should have at least one inner page");
+  for (const page of innerPages) {
+    const design = note.pageDesigns[page.index];
+    assert(design, `inner page ${page.index} must have a design`);
+    const textLayers = design.layers.filter((l) => l.type === "text");
+    assert(textLayers.length === 0,
+      `inner page ${page.index} must have no auto-added text layers (got ${textLayers.length})`);
+  }
+  // Only stickers bound to the cover (pageIndex === 0) by default.
+  const nonCoverStickers = note.stickers.filter((s) => s.pageIndex !== 0);
+  assert(nonCoverStickers.length === 0,
+    `inner pages must have no auto-added stickers (got ${nonCoverStickers.length})`);
+  // Cover may still have its design layers — just sanity check it exists.
+  assert(note.cover.layers.length > 0, "cover should still have design layers");
 }
 
 console.log("\nOK: all copy smoke assertions passed.");

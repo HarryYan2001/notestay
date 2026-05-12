@@ -506,44 +506,46 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const sections: Section[] = [];
 
   if (input.inputMode === "framework") {
-    // Cluster framework slots by matched dimension so two slots that both
-    // describe e.g. 早餐 don't show up as two separate emoji headings.
-    const fwBucket = new Map<string, { emoji: string; label: string; parts: string[] }>();
-    const fwOrder: string[] = [];
-    const addToBucket = (key: string, emoji: string, label: string, value: string) => {
-      const entry = fwBucket.get(key);
-      if (entry) {
-        entry.parts.push(value);
-      } else {
-        fwBucket.set(key, { emoji, label, parts: [value] });
-        fwOrder.push(key);
-      }
-    };
+    // Framework mode preserves the user's structure verbatim: one section per
+    // non-empty slot, in the user's order, using the user's label. We never
+    // re-cluster, never reorder, never drop a user slot, never re-route
+    // content across slots.
+    //
+    // Emoji choice (cosmetic only — never changes the label text):
+    //   1) If the user's label exactly matches a SECTION_BANK label, use that
+    //      bank entry's emoji.
+    //   2) Else if the label is empty or a generic placeholder ("笔记" etc.),
+    //      fall back to 📝 记一笔.
+    //   3) Else (a custom user label like "露台", "宠物友好") use a
+    //      label-only lookup against the bank — that matches custom labels
+    //      that are still standard dimensions (e.g. 露台 → 🌿) — and falls
+    //      back to 📝 when no bank entry's keywords mention the label.
+    const bankByLabel = new Map(SECTION_BANK.map((s) => [s.label, s]));
     for (const b of frameworkBlocks) {
-      const matched = pickSection(b.label, b.value);
-      if (matched) {
-        addToBucket(matched.label, matched.emoji, matched.label, b.value);
+      const rawLabel = b.label.trim();
+      let emoji = "📝";
+      let label: string;
+      if (!rawLabel || GENERIC_LABELS.has(rawLabel)) {
+        label = "记一笔";
+      } else if (bankByLabel.has(rawLabel)) {
+        const entry = bankByLabel.get(rawLabel)!;
+        emoji = entry.emoji;
+        label = rawLabel;
       } else {
-        // No standard dimension matched. If the user gave a non-generic label
-        // (e.g. a custom dimension like "露台" or "私人管家"), promote it to
-        // its own emoji-headed section. Otherwise fall back to 📝 记一笔.
-        const rawLabel = (b.label || "").trim();
-        if (rawLabel && !GENERIC_LABELS.has(rawLabel)) {
-          addToBucket(`__custom__:${rawLabel}`, "📝", rawLabel, b.value);
-        } else {
-          addToBucket("__leftover__", "📝", "记一笔", b.value);
+        // Custom label not in the standard bank. Try a label-only match so
+        // synonyms like 露台/阳台 inherit 🌿; otherwise keep 📝.
+        const labelOnlyMatch = pickSection(rawLabel, "");
+        if (labelOnlyMatch) {
+          emoji = labelOnlyMatch.emoji;
         }
+        label = rawLabel;
       }
-    }
-    for (const key of fwOrder) {
-      const entry = fwBucket.get(key)!;
       sections.push({
-        emoji: entry.emoji,
-        label: entry.label,
-        text: naturalizeUserLine(entry.parts.join("。")),
+        emoji,
+        label,
+        text: naturalizeUserLine(b.value),
       });
     }
-    reviewAndReassign(sections);
   } else if (freeText) {
     // Split free text into chunks and route each chunk to the best-matching section.
     const chunks = stripBanned(freeText)
@@ -729,18 +731,19 @@ export function generateNote(input: AppInputState): GeneratedNote {
     seed,
   });
 
-  // Build default stickers — bind first sticker to cover (page 0)
-  // and second sticker to first scene page (page 1) if present
-  const stickers: StickerOverlay[] = stickerCopy.slice(0, 2).map((text, i) => ({
+  // Build default stickers. Only the cover gets an auto sticker — non-cover
+  // image pages must stay clean photo-only by default. Users can still add
+  // stickers manually in the editor.
+  const stickers: StickerOverlay[] = stickerCopy.slice(0, 1).map((text, i) => ({
     id: `stk_${seed}_${i}`,
-    pageIndex: i === 0 ? 0 : (layout[1]?.index ?? 0),
+    pageIndex: 0,
     text,
-    x: i === 0 ? 12 : 14,
-    y: i === 0 ? 8 : 76,
-    rotation: i === 0 ? -4 : 5,
-    font: i === 0 ? "marker" : "rounded",
+    x: 12,
+    y: 8,
+    rotation: -4,
+    font: "marker",
     color: "#ffffff",
-    background: i === 0 ? "rgba(0,0,0,0.45)" : "rgba(232,89,107,0.85)",
+    background: "rgba(0,0,0,0.45)",
     fontSize: 14,
   }));
 
@@ -786,43 +789,27 @@ function buildScenePageDesign(opts: {
   const palette = STYLES[styleKey].palette;
   const background = page.gradient ||
     `linear-gradient(135deg, ${palette[0]} 0%, ${palette[1]} 55%, ${palette[2]} 100%)`;
+  // Non-cover pages are photo-only by default: one image filling the frame,
+  // no auto-added text or stickers. Users can still add their own via the
+  // editor. If no image is available, leave only the background so the page
+  // reads as a clean placeholder.
   const layers: CoverLayer[] = [];
   if (image) {
     layers.push({
       id: `lyr_pi_${seed}`,
       type: "image",
       imageUrl: image.url,
-      x: 4,
-      y: 6,
-      w: 92,
-      h: 78,
+      x: 0,
+      y: 0,
+      w: 100,
+      h: 100,
       rotation: 0,
       z: 1,
       offsetX: 50,
       offsetY: 50,
       zoom: 1,
-      radius: 18,
-      shadow: true,
-    });
-  }
-  if (page.headline) {
-    layers.push({
-      id: `lyr_ph_${seed}`,
-      type: "text",
-      text: page.headline,
-      x: 6,
-      y: 86,
-      w: 88,
-      h: 8,
-      rotation: 0,
-      z: 5,
-      color: "#ffffff",
-      fontSize: 16,
-      fontWeight: 800,
-      font: "sans",
-      align: "left",
-      background: "rgba(0,0,0,0.35)",
-      shadow: true,
+      radius: 0,
+      shadow: false,
     });
   }
   return { background, bgImageUrl: null, layers };
