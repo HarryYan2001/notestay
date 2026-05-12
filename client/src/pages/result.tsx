@@ -23,6 +23,7 @@ import {
   Sparkles,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 
 const EXPORT_WIDTH = 720; // px (3:4 aspect → 720x960)
@@ -34,6 +35,7 @@ export default function ResultPage() {
   const [selectedPageIndex, setSelectedPageIndex] = useState<number>(0);
   const [exportState, setExportState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [exportError, setExportError] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState<string>("");
   const exportRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   useEffect(() => {
@@ -144,6 +146,30 @@ export default function ResultPage() {
     };
     app.setGenerated(next);
     setSelectedPageIndex(nextIndex);
+  }
+
+  // Normalize a user-entered tag: trim, strip a leading "#"/"＃" if any, then
+  // re-prefix with a single "#". Empty/whitespace-only input returns "".
+  function normalizeTag(raw: string): string {
+    const cleaned = raw.replace(/^[#＃\s]+/, "").trim();
+    return cleaned ? `#${cleaned}` : "";
+  }
+
+  function addTag() {
+    if (!app.generated) return;
+    const v = normalizeTag(tagDraft);
+    if (!v) return;
+    if (app.generated.tags.includes(v)) {
+      setTagDraft("");
+      return;
+    }
+    updateNote({ tags: [...app.generated.tags, v] });
+    setTagDraft("");
+  }
+
+  function removeTag(tag: string) {
+    if (!app.generated) return;
+    updateNote({ tags: app.generated.tags.filter((t) => t !== tag) });
   }
 
   function copy(label: string, text: string) {
@@ -501,10 +527,11 @@ export default function ResultPage() {
               </div>
             </Block>
 
-            {/* Tags */}
+            {/* Tags — editable: add/remove chips, live-synced to phone preview */}
             <Block
               title="话题标签"
               testId="block-tags"
+              subtitle="默认生成 3 个标签,可自行添加或删除,标签将实时同步到左侧手机预览"
               actions={
                 <CopyBtn
                   active={copied === "tags"}
@@ -514,14 +541,59 @@ export default function ResultPage() {
               }
             >
               <div className="flex flex-wrap gap-2" data-testid="row-tags">
+                {note.tags.length === 0 && (
+                  <span
+                    className="text-xs text-muted-foreground"
+                    data-testid="text-no-tags"
+                  >
+                    还没有标签,添加一个试试。
+                  </span>
+                )}
                 {note.tags.map((t) => (
                   <span
                     key={t}
-                    className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium"
+                    className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium"
+                    data-testid={`tag-chip-${t}`}
                   >
-                    {t}
+                    <span>{t}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeTag(t)}
+                      className="inline-flex items-center justify-center size-4 rounded-full hover:bg-primary/20"
+                      aria-label={`删除标签 ${t}`}
+                      title={`删除 ${t}`}
+                      data-testid={`button-delete-tag-${t}`}
+                    >
+                      <X className="size-3" />
+                    </button>
                   </span>
                 ))}
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={tagDraft}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag();
+                    }
+                  }}
+                  placeholder="新增话题标签,例如:亲子出行"
+                  className="flex-1 rounded-full border border-border bg-background px-3 py-1.5 text-xs outline-none focus:border-primary"
+                  data-testid="input-add-tag"
+                  maxLength={32}
+                />
+                <button
+                  type="button"
+                  onClick={addTag}
+                  disabled={normalizeTag(tagDraft) === "" || note.tags.includes(normalizeTag(tagDraft))}
+                  className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 text-primary px-3 py-1.5 text-xs hover-elevate disabled:opacity-40 disabled:cursor-not-allowed"
+                  data-testid="button-add-tag"
+                >
+                  <Plus className="size-3.5" /> 添加
+                </button>
               </div>
             </Block>
 
