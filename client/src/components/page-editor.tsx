@@ -572,7 +572,7 @@ export function PageEditor({
             <ChevronRight className="size-4" />
           </button>
         </div>
-        <div className="text-[11px] hidden md:block">点击图层选中,双击图片进入裁切模式(滚轮缩放),点击空白处退出</div>
+        <div className="text-[11px] hidden md:block">点击图层选中,双击图片进入裁切模式(滚轮缩放),再次双击图片或点击空白处退出</div>
       </div>
 
       <div
@@ -641,7 +641,7 @@ export function PageEditor({
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     setSelectedId(l.id);
-                    setEditingImageId(l.id);
+                    setEditingImageId((prev) => (prev === l.id ? null : l.id));
                   }}
                 >
                   <div
@@ -1204,7 +1204,7 @@ export function PageEditor({
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-card/30 p-3 text-xs text-muted-foreground">
-          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入裁切模式(滚轮缩放,点击空白处退出),双击文字 / 贴纸进入原地编辑。
+          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入裁切模式(滚轮缩放,再次双击图片或点击空白处退出),双击文字 / 贴纸进入原地编辑。
         </div>
       )}
     </div>
