@@ -92,4 +92,77 @@ function countCjk(text: string): number {
   assert(!note.body.includes("【价格"), "freeform: must not contain old bracketed price line");
 }
 
+// Case 4: framework mode with a custom dimension label (露台) — should become
+// its own emoji-headed section, not be folded into 记一笔.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "露台", value: "二楼带一个小露台，傍晚坐在那儿喝杯酒太舒服。" },
+        { id: "f2", label: "房间", value: "床很大，灯光也调得刚好。" },
+      ],
+    }),
+  );
+  console.log("--- framework custom label 露台 ---");
+  console.log(note.body);
+  assert(note.body.includes("🌿 露台"), "should render custom-dimension 露台 with leaf emoji heading");
+  assert(!note.body.includes("📝 记一笔"), "labeled custom dimension should not fall back to 记一笔");
+  assert(note.body.includes("🛏️ 房间"), "labeled 房间 should still render as 🛏️ 房间");
+  for (const p of BANNED) assert(!note.body.includes(p), `body must not contain banned phrase: ${p}`);
+  assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
+}
+
+// Case 5: framework mode with a fully novel label ("宠物友好") that's not in
+// the dimension bank and whose value contains no other dimension keywords —
+// should become its own section using the user's label (with 📝 fallback
+// emoji) instead of being merged into 记一笔.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "宠物友好", value: "可以带狗狗一起入住，还送了一个小礼包。" },
+      ],
+    }),
+  );
+  console.log("--- framework novel label 宠物友好 ---");
+  console.log(note.body);
+  assert(note.body.includes("📝 宠物友好"), "novel custom label should render as its own section heading");
+  assert(!note.body.includes("📝 记一笔"), "novel custom label should not fall back to 记一笔");
+}
+
+// Case 6: free-text mode mentioning new dimension keywords (隔音 / 卫生) — they
+// should cluster into their own emoji-headed sections via auto-detection.
+{
+  const note = generateNote(
+    baseInput({
+      inputMode: "freeform",
+      framework: [],
+      freeText:
+        "酒店隔音真的可以，半夜窗外完全听不到车声。卫生也很在意，浴室缝隙都擦得很干净。早餐种类不多但现做鸡蛋香。",
+    }),
+  );
+  console.log("--- freeform with 隔音/卫生 keywords ---");
+  console.log(note.body);
+  assert(note.body.includes("🤫 隔音"), "freeform: should auto-cluster '隔音' as its own section");
+  assert(note.body.includes("🧼 卫生"), "freeform: should auto-cluster '卫生' as its own section");
+  assert(note.body.includes("🍳 早餐"), "freeform: 早餐 should still render");
+}
+
+// Case 7: framework slot labeled with a generic word (笔记) and no dimension
+// keyword in value — should fall back to 📝 记一笔 rather than promoting the
+// generic label to a section heading.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "笔记", value: "整体感觉很放松，下次还想来一次。" },
+      ],
+    }),
+  );
+  console.log("--- framework generic label 笔记 ---");
+  console.log(note.body);
+  assert(note.body.includes("📝 记一笔"), "generic label should fall back to 📝 记一笔");
+  assert(!note.body.includes("📝 笔记"), "generic label should not be promoted to its own heading");
+}
+
 console.log("\nOK: all copy smoke assertions passed.");

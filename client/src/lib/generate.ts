@@ -167,19 +167,28 @@ export function generateNote(input: AppInputState): GeneratedNote {
   //    one collectible closing line. Target ~500 CJK chars, hard cap 600.
   const tone = pick(style.toneAdjectives, seed + 1);
 
-  // Section heading bank — emoji + Chinese label. We only render the ones
-  // the user actually mentioned, in this order.
-  // Sections are matched in this order. Breakfast comes before service so that
-  // a chunk like "早餐种类不多，但咖啡还可以" doesn't get routed to 服务 just
-  // because the user happened to label the framework slot "服务".
+  // Section heading bank — emoji + Chinese label. We render only the ones the
+  // user actually mentioned, in this order. The bank is intentionally broad so
+  // that user-provided dimension keywords (custom framework labels or phrases
+  // surfaced in free text — e.g. 露台, 隔音, 亲子, 浴缸, 停车) cluster into
+  // their own emoji-headed sections instead of falling into a generic bucket.
+  // More specific dimensions come first so e.g. "浴缸" wins over "房间".
   const SECTION_BANK: { keys: string[]; emoji: string; label: string }[] = [
-    { keys: ["位置", "地段", "交通", "周边", "出行"], emoji: "📍", label: "位置" },
-    { keys: ["第一印象", "印象", "门面", "外观", "大堂", "lobby"], emoji: "✨", label: "第一印象" },
-    { keys: ["早餐", "餐食", "咖啡", "buffet", "自助餐"], emoji: "🍳", label: "早餐" },
+    { keys: ["位置", "地段", "交通", "周边", "出行", "地铁", "机场"], emoji: "📍", label: "位置" },
+    { keys: ["停车", "车位", "代客泊车"], emoji: "🚗", label: "停车" },
+    { keys: ["第一印象", "门面", "外观", "大堂", "lobby"], emoji: "✨", label: "第一印象" },
+    { keys: ["早餐", "餐食", "咖啡", "buffet", "自助餐", "下午茶"], emoji: "🍳", label: "早餐" },
+    { keys: ["浴缸", "泡澡", "汤池"], emoji: "🛁", label: "浴缸" },
+    { keys: ["卫生", "干净", "清洁", "打扫"], emoji: "🧼", label: "卫生" },
+    { keys: ["隔音", "安静", "噪音", "吵"], emoji: "🤫", label: "隔音" },
+    { keys: ["露台", "阳台", "户外平台"], emoji: "🌿", label: "露台" },
+    { keys: ["亲子", "儿童", "小孩", "宝宝", "婴儿床"], emoji: "🧸", label: "亲子" },
+    { keys: ["设计", "装修", "美学", "风格", "氛围"], emoji: "🎨", label: "设计" },
     { keys: ["房间", "房型", "空间", "床", "床品", "卫浴", "浴室"], emoji: "🛏️", label: "房间" },
     { keys: ["服务", "前台", "礼宾", "管家", "态度"], emoji: "🛎️", label: "服务" },
-    { keys: ["设施", "泳池", "健身", "spa", "酒吧", "lounge"], emoji: "🏊", label: "设施" },
-    { keys: ["夜景", "view", "景观", "落地窗"], emoji: "🌃", label: "景观" },
+    { keys: ["设施", "泳池", "健身", "spa", "酒吧", "lounge", "健身房"], emoji: "🏊", label: "设施" },
+    { keys: ["夜景", "view", "景观", "落地窗", "海景", "江景", "山景"], emoji: "🌃", label: "景观" },
+    { keys: ["入住体验", "整体体验", "总体感受"], emoji: "💭", label: "入住体验" },
   ];
 
   // Match on the value first (it carries the actual content). Only fall back
@@ -197,16 +206,58 @@ export function generateNote(input: AppInputState): GeneratedNote {
     return null;
   }
 
+  // Generic label noise that should NOT be promoted into its own section
+  // heading when the framework slot has no recognizable dimension.
+  const GENERIC_LABELS = new Set([
+    "笔记",
+    "记一笔",
+    "备注",
+    "其他",
+    "杂记",
+    "随手记",
+    "补充",
+  ]);
+
   type Section = { emoji: string; label: string; text: string };
   const sections: Section[] = [];
 
   if (input.inputMode === "framework") {
-    for (let i = 0; i < frameworkBlocks.length; i++) {
-      const b = frameworkBlocks[i];
+    // Cluster framework slots by matched dimension so two slots that both
+    // describe e.g. 早餐 don't show up as two separate emoji headings.
+    const fwBucket = new Map<string, { emoji: string; label: string; parts: string[] }>();
+    const fwOrder: string[] = [];
+    const addToBucket = (key: string, emoji: string, label: string, value: string) => {
+      const entry = fwBucket.get(key);
+      if (entry) {
+        entry.parts.push(value);
+      } else {
+        fwBucket.set(key, { emoji, label, parts: [value] });
+        fwOrder.push(key);
+      }
+    };
+    for (const b of frameworkBlocks) {
       const matched = pickSection(b.label, b.value);
-      const emoji = matched?.emoji ?? "📝";
-      const label = matched?.label ?? (b.label || "记一笔");
-      sections.push({ emoji, label, text: naturalizeUserLine(b.value) });
+      if (matched) {
+        addToBucket(matched.label, matched.emoji, matched.label, b.value);
+      } else {
+        // No standard dimension matched. If the user gave a non-generic label
+        // (e.g. a custom dimension like "露台" or "私人管家"), promote it to
+        // its own emoji-headed section. Otherwise fall back to 📝 记一笔.
+        const rawLabel = (b.label || "").trim();
+        if (rawLabel && !GENERIC_LABELS.has(rawLabel)) {
+          addToBucket(`__custom__:${rawLabel}`, "📝", rawLabel, b.value);
+        } else {
+          addToBucket("__leftover__", "📝", "记一笔", b.value);
+        }
+      }
+    }
+    for (const key of fwOrder) {
+      const entry = fwBucket.get(key)!;
+      sections.push({
+        emoji: entry.emoji,
+        label: entry.label,
+        text: naturalizeUserLine(entry.parts.join("。")),
+      });
     }
   } else if (freeText) {
     // Split free text into chunks and route each chunk to the best-matching section.
