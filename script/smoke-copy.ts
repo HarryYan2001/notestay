@@ -165,4 +165,83 @@ function countCjk(text: string): number {
   assert(!note.body.includes("📝 笔记"), "generic label should not be promoted to its own heading");
 }
 
+// Case 8: 复核机制 — breakfast/coffee mistakenly filed under 服务 should be
+// moved into 🍳 早餐 by the review pass.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "服务", value: "前台态度很好，会主动帮忙。早餐有现做鸡蛋和咖啡，水果也新鲜。" },
+        { id: "f2", label: "房间", value: "床很大，灯光也调得刚好。" },
+      ],
+    }),
+  );
+  console.log("--- review pass: breakfast under 服务 ---");
+  console.log(note.body);
+  assert(note.body.includes("🍳 早餐"), "review: breakfast content under 服务 should be moved to 🍳 早餐");
+  assert(note.body.includes("🛎️ 服务"), "review: 服务 section should remain for the front-desk sentence");
+  // The 服务 section must not still contain the breakfast sentence.
+  const servicePart = note.body.split("🛎️ 服务")[1]?.split(/\n\n/)[0] ?? "";
+  assert(!servicePart.includes("早餐") && !servicePart.includes("咖啡"), "review: 服务 section must not retain breakfast/coffee");
+  for (const p of BANNED) assert(!note.body.includes(p), `body must not contain banned phrase: ${p}`);
+  assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
+}
+
+// Case 9: 复核机制 — hygiene content mistakenly placed under 房间 should be
+// moved into 🧼 卫生.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "房间", value: "床品柔软，落地窗采光很好。浴室缝隙都擦得很干净，卫生做得很到位。" },
+      ],
+    }),
+  );
+  console.log("--- review pass: hygiene under 房间 ---");
+  console.log(note.body);
+  assert(note.body.includes("🧼 卫生"), "review: hygiene sentence under 房间 should be moved to 🧼 卫生");
+  assert(note.body.includes("🛏️ 房间"), "review: 房间 section should remain for bed/window sentences");
+  const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
+  assert(!roomPart.includes("卫生") && !roomPart.includes("干净"), "review: 房间 section must not retain hygiene content");
+}
+
+// Case 10: 复核机制 — terrace sentence in generic 笔记 leftover should be
+// promoted into 🌿 露台.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "笔记", value: "整体感觉很放松。二楼带一个小露台，傍晚在那儿喝杯酒太舒服。" },
+      ],
+    }),
+  );
+  console.log("--- review pass: terrace in generic 笔记 ---");
+  console.log(note.body);
+  assert(note.body.includes("🌿 露台"), "review: terrace sentence in generic 笔记 should be moved to 🌿 露台");
+  const leftoverPart = note.body.split("📝 记一笔")[1]?.split(/\n\n/)[0] ?? "";
+  assert(!leftoverPart.includes("露台"), "review: 记一笔 leftover must not retain terrace content");
+}
+
+// Case 11: 复核机制 — freeform mixed content should still split correctly,
+// and the review pass must not corrupt content (idempotent on already-clean
+// freeform routing).
+{
+  const note = generateNote(
+    baseInput({
+      inputMode: "freeform",
+      framework: [],
+      freeText:
+        "前台态度很好，会主动帮忙。早餐有现做鸡蛋和咖啡。浴室缝隙擦得很干净，卫生做得很到位。二楼带一个小露台，傍晚坐那儿太舒服。",
+    }),
+  );
+  console.log("--- review pass: freeform multi-dimension ---");
+  console.log(note.body);
+  assert(note.body.includes("🛎️ 服务"), "freeform review: 服务 section should exist");
+  assert(note.body.includes("🍳 早餐"), "freeform review: 早餐 section should exist");
+  assert(note.body.includes("🧼 卫生"), "freeform review: 卫生 section should exist");
+  assert(note.body.includes("🌿 露台"), "freeform review: 露台 section should exist");
+  for (const p of BANNED) assert(!note.body.includes(p), `body must not contain banned phrase: ${p}`);
+  assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
+}
+
 console.log("\nOK: all copy smoke assertions passed.");
