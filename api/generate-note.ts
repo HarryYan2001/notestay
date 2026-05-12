@@ -438,6 +438,64 @@ export function validatePayload(p: any): string | null {
   return null;
 }
 
+// ───────────────── inlined: CORS allowlist ──────────────────────────────
+//
+// The static GitHub Pages build (https://harryyan2001.github.io/notestay/)
+// calls THIS Vercel function cross-origin — same app, different host. We
+// echo back an allowed origin instead of "*" so:
+//   * Browsers accept the response even when credentials/cookies are sent.
+//   * We never become an open relay for arbitrary third parties.
+//
+// Add new origins to DEFAULT_ALLOWED_ORIGINS when you fork. You can also
+// extend at runtime via the AI_CORS_ALLOWED_ORIGINS env var (comma-separated
+// list of full origins).
+export const DEFAULT_ALLOWED_ORIGINS = [
+  "https://harryyan2001.github.io",
+  "https://notestay.vercel.app",
+];
+
+export function buildAllowedOrigins(env?: { extra?: string }): string[] {
+  const extra = (env?.extra || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return Array.from(new Set([...DEFAULT_ALLOWED_ORIGINS, ...extra]));
+}
+
+export function resolveAllowedOrigin(
+  requestOrigin: string | string[] | undefined,
+  allowed: string[],
+): string | null {
+  if (!requestOrigin) return null;
+  const o = Array.isArray(requestOrigin) ? requestOrigin[0] : requestOrigin;
+  if (typeof o !== "string" || !o) return null;
+  return allowed.includes(o) ? o : null;
+}
+
+function applyCorsHeaders(req: VercelLikeRequest, res: VercelLikeResponse) {
+  try {
+    const allowed = buildAllowedOrigins({
+      extra: process.env.AI_CORS_ALLOWED_ORIGINS,
+    });
+    const origin = resolveAllowedOrigin(req.headers?.origin, allowed);
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      // Vary: Origin is essential when echoing the origin, so intermediary
+      // caches (Vercel edge, browser HTTP cache) don't serve one origin's
+      // response to another.
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization",
+    );
+    res.setHeader("Access-Control-Max-Age", "86400");
+  } catch {
+    /* noop */
+  }
+}
+
 // ───────────────── handler ──────────────────────────────────────────────
 
 export default async function handler(
@@ -452,15 +510,10 @@ export default async function handler(
   } catch {
     /* noop */
   }
+  applyCorsHeaders(req, res);
 
   try {
     if (req.method === "OPTIONS") {
-      try {
-        res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      } catch {
-        /* noop */
-      }
       return res.status(204).json({});
     }
     if (req.method !== "POST") {
