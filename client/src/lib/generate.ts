@@ -10,6 +10,13 @@ import type {
   UploadedImage,
 } from "./types";
 import { STYLES } from "./styles";
+import {
+  analyzeViralReference,
+  applyTitleStyle,
+  decorateBodyOpening,
+  viralWarningMessage,
+  VIRAL_CUE_LABELS,
+} from "./viral-style";
 
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
 
@@ -138,8 +145,9 @@ export function generateNote(input: AppInputState): GeneratedNote {
   if (!city) warnings.push("未提供城市,将不在文中标注具体城市与定位。");
   if (input.images.length === 0)
     warnings.push("未上传图片,封面与内页将使用渐变占位版式作为参考,而非伪造的照片内容。");
-  if (nonEmpty(input.viralRef))
-    warnings.push("已分析所附爆款笔记链接的结构、节奏与标题逻辑作为参考,不会复制其原文或图片内容。");
+  const viralProfile = analyzeViralReference(input.viralRef);
+  const viralWarning = viralWarningMessage(viralProfile);
+  if (viralWarning) warnings.push(viralWarning);
 
   const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
@@ -152,7 +160,10 @@ export function generateNote(input: AppInputState): GeneratedNote {
     "这家酒店";
   const prefix = pick(style.titlePrefixes, seed);
   const suffix = pick(style.titleSuffixes, seed + 7);
-  const title = stripBanned(`${prefix}${subject}｜${suffix}`);
+  const baseTitle = stripBanned(`${prefix}${subject}｜${suffix}`);
+  // Bend the title toward the learned reference style (emoji / punctuation /
+  // hook prefix). When no reference was provided, this is a no-op.
+  const title = applyTitleStyle(baseTitle, viralProfile);
   const coverHeadlines = [
     `${subject}\n真的很会住!`,
     `这家酒店\n太适合收藏!`,
@@ -165,7 +176,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     stripBanned(`${city ? `${city}｜` : ""}${subject}｜${pick(style.titleSuffixes, seed + 13)}`),
     stripBanned(`${pick(style.titlePrefixes, seed + 17)}${subject}｜${pick(style.toneAdjectives, seed + 3)}到想再来一次`),
     stripBanned(`${subject}｜${pick(style.toneAdjectives, seed + 5)}入住,${pick(style.titleSuffixes, seed + 23)}`),
-  ];
+  ].map((t) => applyTitleStyle(t, viralProfile));
 
   // 3) Body — Xiaohongshu travel blogger voice.
   //    Structure: opening hook (not "这次来到..."), emoji-headed sections only
@@ -584,7 +595,10 @@ export function generateNote(input: AppInputState): GeneratedNote {
     `给嘴硬的我跪了，这家${tone}得有点上头。`,
     `没夸张，住进去那一刻心情就被${tone}拿捏了。`,
   ];
-  const opening = stripBanned(pick(hookBank, seed + 31));
+  const opening = decorateBodyOpening(
+    stripBanned(pick(hookBank, seed + 31)),
+    viralProfile,
+  );
 
   // Optional context line (city / stay date / room type) — only if provided.
   const ctxParts: string[] = [];
@@ -760,6 +774,15 @@ export function generateNote(input: AppInputState): GeneratedNote {
     pageDesigns,
     stickers,
     warnings,
+    viralStyle: {
+      hasInput: viralProfile.hasInput,
+      cues: viralProfile.cues,
+      cueLabels: viralProfile.cues.map((c) => VIRAL_CUE_LABELS[c]),
+      status: viralProfile.status,
+      isFallback: viralProfile.isFallback,
+      isXhsLink: viralProfile.isXhsLink,
+      extractedTitle: viralProfile.extractedTitle,
+    },
   };
 }
 

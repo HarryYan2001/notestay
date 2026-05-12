@@ -9,6 +9,7 @@ import {
 } from "@/lib/app-state";
 import { STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
+import { analyzeViralReference, VIRAL_CUE_LABELS } from "@/lib/viral-style";
 import type { InputMode, UploadedImage } from "@/lib/types";
 import {
   Plus,
@@ -432,23 +433,25 @@ export default function CreatePage() {
             {/* Viral reference */}
             <Section
               title="爆款笔记学习(可选)"
-              subtitle="只学结构 / 节奏 / 标题逻辑,绝不复制原文与原图"
+              subtitle="粘贴小红书链接或完整分享文本,我们会学习其标题语气与节奏(不复制原文)"
               testId="section-viral"
             >
-              <div className="flex items-center gap-2">
-                <Link2 className="size-4 text-muted-foreground" />
-                <input
-                  type="url"
+              <div className="flex items-start gap-2">
+                <Link2 className="size-4 text-muted-foreground mt-2.5" />
+                <textarea
                   value={app.state.viralRef}
                   onChange={(e) => app.setViralRef(e.target.value)}
-                  placeholder="粘贴一篇你想参考的小红书爆款笔记链接"
-                  className="flex-1 text-sm bg-card border border-input rounded-md px-3 py-2 focus:border-primary focus:outline-none"
+                  rows={3}
+                  placeholder={"粘贴小红书爆款笔记链接,或整段分享文本。例如:\n49 【亚朵你还我萨和！！！😭 - 晨钟去哪玩 | 小红书】 hsj... https://www.xiaohongshu.com/discovery/item/..."}
+                  className="flex-1 text-sm bg-card border border-input rounded-md px-3 py-2 focus:border-primary focus:outline-none resize-y"
                   data-testid="input-viral-link"
                 />
               </div>
+              <ViralLearningStatus value={app.state.viralRef} />
               <p className="mt-2 text-xs text-muted-foreground">
-                我们会分析该笔记的结构、节奏、标题与排版逻辑,作为版式参考;
-                不会抄袭原文文字、原图与作者个人内容。
+                受小红书登录态和爬虫规则限制,本应用不会代你访问原页面。
+                我们会从你粘贴的标题、emoji、标点和分享文本中提取语气线索,
+                据此调整本次生成的标题与开头节奏,不会复制原文与原图。
               </p>
             </Section>
           </div>
@@ -631,6 +634,69 @@ function Field({
         data-testid={testId}
       />
     </label>
+  );
+}
+
+// Renders the learned-style summary for the 爆款笔记学习 block.
+// Visible only when the user has pasted something. Shows either the matched
+// cue chips ("已学习:强情绪标题 / 哭脸 emoji …"), or a fallback hint when
+// the share text was unsupported / blocked / yielded no usable cues.
+function ViralLearningStatus({ value }: { value: string }) {
+  const profile = analyzeViralReference(value);
+  if (!profile.hasInput) {
+    return (
+      <p
+        className="mt-2 text-[11px] text-muted-foreground"
+        data-testid="viral-learning-empty"
+      >
+        粘贴上方分享文本或链接后,这里会显示我们学到的语气特征。
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 space-y-2" data-testid="viral-learning-panel">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span
+          className="text-[11px] font-semibold text-foreground"
+          data-testid="viral-learning-status-label"
+        >
+          {profile.cues.length > 0 ? "已学习:" : "未提取到额外特征"}
+        </span>
+        {profile.cues.map((cue) => (
+          <span
+            key={cue}
+            className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium border border-primary/30"
+            data-testid={`viral-cue-${cue}`}
+          >
+            {VIRAL_CUE_LABELS[cue] ?? cue}
+          </span>
+        ))}
+      </div>
+      {profile.extractedTitle && (
+        <div
+          className="text-[10px] text-muted-foreground truncate"
+          data-testid="viral-learning-original-title"
+          title={profile.extractedTitle}
+        >
+          原标题(仅用于学习,不会复制):{profile.extractedTitle}
+        </div>
+      )}
+      {profile.isFallback && (
+        <div
+          className="text-[10px] text-amber-600 dark:text-amber-300"
+          data-testid="viral-learning-fallback"
+        >
+          未识别到小红书链接,我们已尝试从粘贴的文本中学习。
+          如需更精准的学习,可在文本里保留 【标题】 部分。
+        </div>
+      )}
+      <p
+        className="text-[10px] text-muted-foreground leading-relaxed"
+        data-testid="viral-learning-status-text"
+      >
+        {profile.status}
+      </p>
+    </div>
   );
 }
 
