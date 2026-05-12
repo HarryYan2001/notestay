@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { useApp } from "@/lib/app-state";
 import { STYLES, STYLE_LIST } from "@/lib/styles";
-import { generateNote } from "@/lib/generate";
+import { generateNoteWithAi, AiNotConfiguredError } from "@/lib/ai-generate";
 import type { GeneratedNote, PageDesign, PageLayout, StickerOverlay } from "@/lib/types";
 import { PageEditor } from "@/components/page-editor";
 import { PageFlat } from "@/components/page-flat";
@@ -179,17 +179,51 @@ export default function ResultPage() {
     });
   }
 
-  function regenerate() {
-    const next = generateNote(app.state);
-    app.setGenerated(next);
-    setSelectedPageIndex(0);
+  // True while we're calling the AI route from the result page (regenerate
+  // text / switch style). Buttons are disabled during this window so users
+  // don't fire concurrent requests.
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenError, setRegenError] = useState<string | null>(null);
+
+  async function regenerate() {
+    if (regenerating) return;
+    setRegenerating(true);
+    setRegenError(null);
+    try {
+      const next = await generateNoteWithAi(app.state);
+      app.setGenerated(next);
+      setSelectedPageIndex(0);
+    } catch (err) {
+      console.error("Regenerate failed", err);
+      const msg =
+        err instanceof AiNotConfiguredError
+          ? err.message
+          : (err as Error)?.message || "AI 重新生成失败。";
+      setRegenError(msg);
+    } finally {
+      setRegenerating(false);
+    }
   }
 
-  function switchStyle(key: keyof typeof STYLES) {
+  async function switchStyle(key: keyof typeof STYLES) {
+    if (regenerating) return;
     app.setStyle(key);
-    const next = generateNote({ ...app.state, style: key });
-    app.setGenerated(next);
-    setSelectedPageIndex(0);
+    setRegenerating(true);
+    setRegenError(null);
+    try {
+      const next = await generateNoteWithAi({ ...app.state, style: key });
+      app.setGenerated(next);
+      setSelectedPageIndex(0);
+    } catch (err) {
+      console.error("Switch style regenerate failed", err);
+      const msg =
+        err instanceof AiNotConfiguredError
+          ? err.message
+          : (err as Error)?.message || "AI 切换风格失败。";
+      setRegenError(msg);
+    } finally {
+      setRegenerating(false);
+    }
   }
 
   const currentPage =
@@ -301,12 +335,27 @@ export default function ResultPage() {
               type="button"
               data-testid="button-regenerate"
               onClick={regenerate}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-sm hover:opacity-95"
+              disabled={regenerating}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-sm hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <RefreshCw className="size-4" /> 重新生成
+              <RefreshCw className={`size-4 ${regenerating ? "animate-spin" : ""}`} />{" "}
+              {regenerating ? "AI 生成中…" : "重新生成"}
             </button>
           </div>
         </div>
+
+        {regenError && (
+          <div
+            className="mt-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 flex gap-3 text-sm"
+            data-testid="banner-regen-error"
+          >
+            <AlertTriangle className="size-4 mt-0.5 text-destructive shrink-0" />
+            <div className="leading-relaxed text-foreground/85">
+              <strong>AI 生成失败：</strong>
+              {regenError}
+            </div>
+          </div>
+        )}
 
         {note.warnings.length > 0 && (
           <div
@@ -369,10 +418,11 @@ export default function ResultPage() {
                 <button
                   type="button"
                   onClick={regenerate}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-sm hover:opacity-95"
+                  disabled={regenerating}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-sm hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-regenerate-text"
                 >
-                  <Sparkles className="size-4" /> 重新生成文本
+                  <Sparkles className="size-4" /> {regenerating ? "AI 生成中…" : "重新生成文本"}
                 </button>
               </div>
             </div>

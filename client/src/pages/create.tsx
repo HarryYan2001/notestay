@@ -8,7 +8,7 @@ import {
   useApp,
 } from "@/lib/app-state";
 import { STYLE_LIST } from "@/lib/styles";
-import { generateNote } from "@/lib/generate";
+import { generateNoteWithAi, AiNotConfiguredError } from "@/lib/ai-generate";
 import {
   analyzeScreenshotText,
   DEFAULT_TEXT_STYLE_STRENGTH,
@@ -57,6 +57,10 @@ export default function CreatePage() {
   // so we expose it as a separate state and surface a spinner.
   const [ocrRunning, setOcrRunning] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  // Surfaces backend errors from the AI generation route (missing
+  // ZHIPU_API_KEY, model failure, etc.) so the UI can clearly say "AI 生成
+  // 服务未配置" rather than silently rendering deterministic template output.
+  const [aiError, setAiError] = useState<string | null>(null);
 
   async function onPickScreenshot(file: File | null | undefined) {
     if (!file) return;
@@ -212,18 +216,18 @@ export default function CreatePage() {
   async function handleGenerate() {
     setGenerating(true);
     setAgentStep(0);
+    setAiError(null);
     try {
-      // simulate 3-agent pipeline
-      const steps = [
-        "内容理解 Agent · 解析素材与心得",
-      "视觉优化 Agent · 主图选择、黄金分割裁切与封面建议",
-        "互动提升 Agent · 标题、标签与评论引导",
-      ];
-      for (let i = 0; i < steps.length; i++) {
-        setAgentStep(i + 1);
-        await new Promise((r) => setTimeout(r, 650));
-      }
-      const note = generateNote(app.state);
+      // Stage 1: parsing user material locally (still useful as feedback).
+      setAgentStep(1);
+      await new Promise((r) => setTimeout(r, 250));
+      // Stage 2: build visual scaffold + prepare AI prompt.
+      setAgentStep(2);
+      await new Promise((r) => setTimeout(r, 250));
+      // Stage 3: call the AI route. This is the long step — the overlay
+      // remains on "互动提升 Agent" until the model returns.
+      setAgentStep(3);
+      const note = await generateNoteWithAi(app.state);
       flushSync(() => {
         app.setGenerated(note);
         setGenerating(false);
@@ -231,6 +235,12 @@ export default function CreatePage() {
       navigate("/result");
     } catch (error) {
       console.error("Failed to generate note", error);
+      const msg =
+        error instanceof AiNotConfiguredError
+          ? error.message
+          : (error as Error)?.message ||
+            "AI 生成失败，请稍后重试或检查 ZHIPU_API_KEY 是否已配置。";
+      setAiError(msg);
       setGenerating(false);
     }
   }
@@ -268,6 +278,23 @@ export default function CreatePage() {
             <ArrowRight className="size-4" />
           </button>
         </div>
+
+        {/* AI error banner — shown when /api/generate-note fails (missing key,
+            network, or model error). The 生成 button stays enabled so the user
+            can retry after fixing config; no silent fallback to template
+            output. */}
+        {aiError && (
+          <div
+            className="mt-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 flex gap-3 text-sm"
+            data-testid="banner-ai-error"
+          >
+            <Info className="size-4 mt-0.5 text-destructive shrink-0" />
+            <div className="leading-relaxed text-foreground/85">
+              <strong>AI 生成失败：</strong>
+              {aiError}
+            </div>
+          </div>
+        )}
 
         {/* Rules banner */}
         <div
@@ -997,7 +1024,7 @@ function GenerateOverlay({ step }: { step: number }) {
   const steps = [
     { name: "内容理解 Agent", desc: "解析心得 + 实拍 + 酒店信息" },
     { name: "视觉优化 Agent", desc: "按图片类别选主图,用黄金分割优化封面视觉重点" },
-    { name: "互动提升 Agent", desc: "标题、标签与评论引导" },
+    { name: "正文撰写 Agent · 智谱大模型", desc: "调用 AI 生成标题、正文、标签与评论引导" },
   ];
   return (
     <div
@@ -1008,11 +1035,11 @@ function GenerateOverlay({ step }: { step: number }) {
         <div className="text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
             <span className="size-1.5 rounded-full bg-primary animate-pulse" />
-            生成中
+            正在调用 AI 生成笔记
           </div>
           <h2 className="mt-4 text-2xl font-bold tracking-tight">正在为你生成笔记…</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            三位 Agent 协作完成内容、版式与互动建议。
+            正文由智谱 AI 实时生成，封面与版式仍由本地视觉优化器排版。
           </p>
         </div>
         <ol className="mt-8 space-y-3">
