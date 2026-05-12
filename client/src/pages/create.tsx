@@ -11,10 +11,6 @@ import { STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
 import type { InputMode, UploadedImage } from "@/lib/types";
 import {
-  FRAMEWORK_PRESETS,
-  instantiatePreset,
-} from "@/lib/framework-presets";
-import {
   Plus,
   Trash2,
   Upload,
@@ -25,6 +21,8 @@ import {
   ChevronRight,
   ArrowRight,
   LayoutTemplate,
+  Save,
+  Check,
 } from "lucide-react";
 
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
@@ -65,20 +63,41 @@ export default function CreatePage() {
   function removeFrameworkField(id: string) {
     app.setFramework(app.state.framework.filter((f) => f.id !== id));
   }
-  // Apply a preset template. If the user has already filled in any value,
-  // confirm before replacing — preset application replaces the framework
-  // structure (labels and order), not values, since values are personal.
-  function applyFrameworkPreset(key: string) {
-    const preset = FRAMEWORK_PRESETS.find((p) => p.key === key);
-    if (!preset) return;
+  // Save the current framework (labels, order, values) as a named custom
+  // template. The user supplies a non-empty name via a prompt; duplicates
+  // are allowed but blank names are rejected.
+  function saveCurrentFramework() {
+    if (app.state.framework.length === 0) {
+      window.alert("当前没有任何维度可保存,请先添加至少一个维度。");
+      return;
+    }
+    const raw = window.prompt("为这套自定义框架取个名字(例如:精品民宿 5 维度):");
+    if (raw === null) return;
+    const name = raw.trim();
+    if (!name) {
+      window.alert("模板名称不能为空。");
+      return;
+    }
+    app.saveTemplate(name);
+  }
+  // Apply a previously saved custom framework. If the user has filled in any
+  // value, confirm before replacing — applying a template overwrites the
+  // current framework structure (labels, order) and pre-fills values from
+  // the template, so unsaved changes would be lost.
+  function applySavedTemplate(id: string) {
     const hasValues = app.state.framework.some((f) => f.value.trim().length > 0);
     if (hasValues) {
       const ok = window.confirm(
-        `应用「${preset.name}」模板会替换当前所有维度,已填写的内容将被清空,是否继续?`,
+        "应用模板会替换当前所有维度,已填写的内容将被清空,是否继续?",
       );
       if (!ok) return;
     }
-    app.setFramework(instantiatePreset(preset));
+    app.applyTemplate(id);
+  }
+  function deleteSavedTemplate(id: string, name: string) {
+    const ok = window.confirm(`确定删除模板「${name}」吗?该操作无法撤销。`);
+    if (!ok) return;
+    app.deleteTemplate(id);
   }
 
   function onPickFiles(files: FileList | null) {
@@ -240,29 +259,66 @@ export default function CreatePage() {
                 <div className="space-y-3">
                   <div
                     className="rounded-xl border border-dashed border-border bg-card/40 p-3 space-y-2"
-                    data-testid="framework-presets"
+                    data-testid="framework-templates"
                   >
-                    <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
-                      <LayoutTemplate className="size-3.5" />
-                      套用框架模板(可编辑维度名称,刷新后自动保留)
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
+                        <LayoutTemplate className="size-3.5" />
+                        我的自定义框架(刷新后自动保留)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={saveCurrentFramework}
+                        className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 text-primary px-3 py-1 text-xs hover-elevate"
+                        data-testid="button-save-framework-template"
+                        title="将当前维度名称、顺序与内容保存为命名模板"
+                      >
+                        <Save className="size-3.5" />
+                        保存为模板
+                      </button>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {FRAMEWORK_PRESETS.map((p) => (
-                        <button
-                          key={p.key}
-                          type="button"
-                          onClick={() => applyFrameworkPreset(p.key)}
-                          className="text-left rounded-xl border border-card-border bg-background px-3 py-2 hover-elevate"
-                          data-testid={`framework-preset-${p.key}`}
-                          title={p.description}
-                        >
-                          <div className="text-xs font-semibold">{p.name}</div>
-                          <div className="text-[10px] text-muted-foreground line-clamp-1">
-                            {p.description}
+                    {app.templates.length === 0 ? (
+                      <p
+                        className="text-[10px] text-muted-foreground"
+                        data-testid="hint-no-templates"
+                      >
+                        尚未保存任何模板。先编辑下方维度的名称、顺序与内容,然后点击「保存为模板」并取名,下次进入页面或刷新后即可一键应用。
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2" data-testid="framework-template-list">
+                        {app.templates.map((tpl) => (
+                          <div
+                            key={tpl.id}
+                            className="inline-flex items-stretch rounded-xl border border-card-border bg-background overflow-hidden"
+                            data-testid={`framework-template-${tpl.id}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => applySavedTemplate(tpl.id)}
+                              className="text-left px-3 py-1.5 hover-elevate inline-flex items-center gap-1.5"
+                              data-testid={`framework-template-apply-${tpl.id}`}
+                              title={`应用模板「${tpl.name}」(${tpl.fields.length} 个维度)`}
+                            >
+                              <Check className="size-3 text-primary" />
+                              <span className="text-xs font-semibold">{tpl.name}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                · {tpl.fields.length} 维度
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteSavedTemplate(tpl.id, tpl.name)}
+                              className="px-2 inline-flex items-center justify-center text-muted-foreground hover:text-destructive border-l border-card-border"
+                              data-testid={`framework-template-delete-${tpl.id}`}
+                              title={`删除模板「${tpl.name}」`}
+                              aria-label={`删除模板 ${tpl.name}`}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
                           </div>
-                        </button>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {app.state.framework.map((f) => (
                     <div

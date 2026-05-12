@@ -18,7 +18,10 @@ import type {
 } from "./types";
 import {
   readFrameworkFromUrl,
+  readTemplatesFromUrl,
   writeFrameworkToUrl,
+  writeTemplatesToUrl,
+  type SavedFrameworkTemplate,
 } from "./framework-persist";
 
 const DEFAULT_FRAMEWORK: FrameworkField[] = [
@@ -68,6 +71,12 @@ interface AppCtx {
   setViralRef: (s: string) => void;
   generated: GeneratedNote | null;
   setGenerated: (g: GeneratedNote | null) => void;
+  // User-saved framework templates. Persisted to the URL alongside the
+  // currently-active framework so they survive a refresh on a static deploy.
+  templates: SavedFrameworkTemplate[];
+  saveTemplate: (name: string) => SavedFrameworkTemplate;
+  deleteTemplate: (id: string) => void;
+  applyTemplate: (id: string) => void;
   reset: () => void;
 }
 
@@ -95,6 +104,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return DEFAULT_INPUT;
   });
   const [generated, setGenerated] = useState<GeneratedNote | null>(null);
+  const [templates, setTemplates] = useState<SavedFrameworkTemplate[]>(() => {
+    return readTemplatesFromUrl() ?? [];
+  });
 
   // Persist framework state to the URL whenever it changes. This is our
   // refresh-survival mechanism on static deploys (GitHub Pages) without
@@ -107,6 +119,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (state.framework === initialFrameworkRef.current) return;
     writeFrameworkToUrl(state.framework);
   }, [state.framework]);
+
+  // Persist saved templates to the URL on change. Same rationale as the
+  // framework write above — we want refresh-survival without using any
+  // browser storage. We skip the initial run (hydration) to avoid a no-op
+  // history replacement when nothing has changed.
+  const initialTemplatesRef = useRef(templates);
+  useEffect(() => {
+    if (templates === initialTemplatesRef.current) return;
+    writeTemplatesToUrl(templates);
+  }, [templates]);
 
   const value = useMemo<AppCtx>(
     () => ({
@@ -147,12 +169,40 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setViralRef: (v) => setState((s) => ({ ...s, viralRef: v })),
       generated,
       setGenerated,
+      templates,
+      saveTemplate: (name) => {
+        const trimmed = name.trim();
+        const tpl: SavedFrameworkTemplate = {
+          id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: trimmed,
+          // Snapshot the current framework's labels and values so the user
+          // can recreate the same starting point later.
+          fields: state.framework.map((f) => ({ label: f.label, value: f.value })),
+        };
+        setTemplates((prev) => [...prev, tpl]);
+        return tpl;
+      },
+      deleteTemplate: (id) =>
+        setTemplates((prev) => prev.filter((t) => t.id !== id)),
+      applyTemplate: (id) => {
+        const tpl = templates.find((t) => t.id === id);
+        if (!tpl) return;
+        const stamp = Date.now();
+        setState((s) => ({
+          ...s,
+          framework: tpl.fields.map((f, idx) => ({
+            id: `f_tpl_${tpl.id}_${stamp}_${idx}`,
+            label: f.label,
+            value: f.value,
+          })),
+        }));
+      },
       reset: () => {
         setState(DEFAULT_INPUT);
         setGenerated(null);
       },
     }),
-    [state, generated]
+    [state, generated, templates]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

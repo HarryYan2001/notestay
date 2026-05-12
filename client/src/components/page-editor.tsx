@@ -99,6 +99,7 @@ export function PageEditor({
   testIdPrefix = "page",
 }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const editorRootRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -479,6 +480,29 @@ export function PageEditor({
     };
   }, [editingImageId, design.layers, updateLayer]);
 
+  // Exit image adjustment mode when the user clicks anywhere outside the
+  // editor (including outside the stage, e.g. clicking far below the
+  // canvas). The stage's own onPointerDown already clears editingImageId
+  // for clicks on the stage background, but it cannot see clicks that
+  // never enter the stage at all. A document-level capture-phase listener
+  // covers that gap. We intentionally treat the entire editor root as
+  // "inside" so the settings panel's "退出调整图片" button and the
+  // adjust-aware toolbar stay reachable while the mode is active.
+  useEffect(() => {
+    if (!editingImageId) return;
+    const handler = (ev: PointerEvent) => {
+      const root = editorRootRef.current;
+      if (!root) return;
+      const target = ev.target as Node | null;
+      if (target && root.contains(target)) return;
+      setEditingImageId(null);
+    };
+    document.addEventListener("pointerdown", handler, true);
+    return () => {
+      document.removeEventListener("pointerdown", handler, true);
+    };
+  }, [editingImageId]);
+
   // Stickers
   function addSticker(preset?: StickerPreset) {
     const id = `stk_${Date.now()}`;
@@ -510,7 +534,11 @@ export function PageEditor({
   }
 
   return (
-    <div className="space-y-3" data-testid={`${testIdPrefix}-editor`}>
+    <div
+      ref={editorRootRef}
+      className="space-y-3"
+      data-testid={`${testIdPrefix}-editor`}
+    >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <div className="inline-flex items-center gap-2">
           <button
@@ -541,7 +569,7 @@ export function PageEditor({
             <ChevronRight className="size-4" />
           </button>
         </div>
-        <div className="text-[11px] hidden md:block">点击图层选中,双击图片进入裁切模式(滚轮缩放)</div>
+        <div className="text-[11px] hidden md:block">点击图层选中,双击图片进入调整模式(滚轮缩放·拖动平移);再次双击或点击图层外即可退出</div>
       </div>
 
       <div
@@ -594,11 +622,21 @@ export function PageEditor({
                   style={{
                     ...common,
                     borderRadius: l.radius,
-                    boxShadow: l.shadow ? "0 8px 24px rgba(0,0,0,0.25)" : "none",
-                    outline: isSelected ? "2px solid #fff" : "none",
-                    outlineOffset: isSelected ? 2 : 0,
+                    boxShadow: isImageEditing
+                      ? "0 0 0 2px #f59e0b, 0 10px 28px rgba(245,158,11,0.35)"
+                      : l.shadow
+                      ? "0 8px 24px rgba(0,0,0,0.25)"
+                      : "none",
+                    outline: isImageEditing
+                      ? "2px solid #f59e0b"
+                      : isSelected
+                      ? "2px solid #fff"
+                      : "none",
+                    outlineOffset: isImageEditing ? 3 : isSelected ? 2 : 0,
+                    cursor: isImageEditing ? "grab" : common.cursor,
                   }}
                   data-testid={`${testIdPrefix}-layer-${l.id}`}
+                  data-adjusting={isImageEditing ? "true" : "false"}
                   onPointerDown={(e) => {
                     if (isSelected && isImageEditing) {
                       startImgPan(e, l);
@@ -608,8 +646,11 @@ export function PageEditor({
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
+                    // Toggle adjustment mode: second double-click on the
+                    // image exits, matching the requested gesture model
+                    // (double-click in / double-click out / click outside out).
                     setSelectedId(l.id);
-                    setEditingImageId(l.id);
+                    setEditingImageId((curr) => (curr === l.id ? null : l.id));
                   }}
                 >
                   <div
@@ -692,8 +733,11 @@ export function PageEditor({
                         testId={`${testIdPrefix}-crop-bottom-${l.id}`}
                       />
                       {isImageEditing && (
-                        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white whitespace-nowrap">
-                          <Move className="size-3" /> 拖动 / 滚轮缩放
+                        <div
+                          className="pointer-events-none absolute left-1/2 -top-3 -translate-x-1/2 -translate-y-full inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white whitespace-nowrap shadow"
+                          data-testid={`${testIdPrefix}-adjusting-badge-${l.id}`}
+                        >
+                          <Move className="size-3" /> 调整模式 · 拖动 / 滚轮缩放 · 双击或点空白退出
                         </div>
                       )}
                     </>
@@ -1169,7 +1213,7 @@ export function PageEditor({
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-card/30 p-3 text-xs text-muted-foreground">
-          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入裁切模式(滚轮缩放),双击文字 / 贴纸进入原地编辑。
+          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入调整模式(滚轮缩放·拖动平移,再次双击或点击图层外退出),双击文字 / 贴纸进入原地编辑。
         </div>
       )}
     </div>
