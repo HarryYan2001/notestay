@@ -21,6 +21,8 @@ import {
   mergeAiResponse,
   generateNoteWithAi,
   AiNotConfiguredError,
+  FRONTEND_AI_TIMEOUT_MS,
+  isAbortError,
 } from "../client/src/lib/ai-generate";
 import { generateNote } from "../client/src/lib/generate";
 import type { AppInputState } from "../client/src/lib/types";
@@ -290,6 +292,99 @@ async function runFetchMocks() {
   }
   assert(saw502Error && !(saw502Error instanceof AiNotConfiguredError), "502 must throw plain Error, not AiNotConfiguredError");
   assert(/模型超时/.test((saw502Error as Error).message), "502 error message must include server error string");
+
+  // -------------------------------------------------------------------
+  // Case: client-side AbortError must surface as a friendly Chinese
+  // timeout message, NOT the raw "signal is aborted without reason"
+  // string browsers throw. This is the exact production regression that
+  // caused the screenshot the user reported.
+  // -------------------------------------------------------------------
+  console.log("--- generateNoteWithAi: AbortError maps to friendly timeout message ---");
+  const abortingFetch: typeof fetch = async (_url: any, init?: any) => {
+    // Wait for the signal to abort, then reject with the same shape
+    // modern fetch implementations use.
+    const signal: AbortSignal | undefined = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      const fail = () => {
+        const err: any = new Error("signal is aborted without reason");
+        err.name = "AbortError";
+        reject(err);
+      };
+      if (signal?.aborted) return fail();
+      signal?.addEventListener("abort", fail, { once: true });
+    });
+  };
+  let sawAbortErr: any = null;
+  try {
+    await generateNoteWithAi(baseInput(), {
+      fetchImpl: abortingFetch,
+      endpoint: "/api/generate-note",
+      // Tight timeout so the test runs fast; abort triggers within ~50ms.
+      timeoutMs: 50,
+    });
+  } catch (err) {
+    sawAbortErr = err;
+  }
+  assert(sawAbortErr, "abort must throw");
+  const abortMsg = (sawAbortErr as Error).message;
+  assert(
+    /AI 生成超时/.test(abortMsg),
+    `abort message must mention 'AI 生成超时', got: ${abortMsg}`,
+  );
+  assert(
+    !/signal is aborted/i.test(abortMsg),
+    `raw 'signal is aborted' string must NOT leak to UI, got: ${abortMsg}`,
+  );
+  assert(
+    !(sawAbortErr instanceof AiNotConfiguredError),
+    "abort must not be classified as AiNotConfiguredError",
+  );
+
+  // -------------------------------------------------------------------
+  // Case: isAbortError recognises the various shapes browsers / Node use.
+  // -------------------------------------------------------------------
+  console.log("--- isAbortError recognises AbortError / ABORT_ERR / 'aborted' ---");
+  const e1: any = new Error("x");
+  e1.name = "AbortError";
+  assert(isAbortError(e1), "name === AbortError matches");
+  const e2: any = new Error("x");
+  e2.code = "ABORT_ERR";
+  assert(isAbortError(e2), "code === ABORT_ERR matches");
+  assert(
+    isAbortError(new Error("signal is aborted without reason")),
+    "message containing 'aborted' matches",
+  );
+  assert(!isAbortError(new Error("some other error")), "unrelated error rejected");
+  assert(!isAbortError(null), "null rejected");
+
+  // -------------------------------------------------------------------
+  // Case: default frontend timeout is long enough to outlast a Vercel
+  // function call (must be larger than the platform's maxDuration so we
+  // never abort a request the server would have completed).
+  // -------------------------------------------------------------------
+  console.log("--- FRONTEND_AI_TIMEOUT_MS must exceed 60s Vercel maxDuration ---");
+  assert(
+    FRONTEND_AI_TIMEOUT_MS >= 90_000,
+    `frontend timeout must be >= 90s, got ${FRONTEND_AI_TIMEOUT_MS}`,
+  );
+
+  // -------------------------------------------------------------------
+  // Case: payload shape sent by buildAiRequest passes the server's
+  // validatePayload check. Catches drift between client and server.
+  // -------------------------------------------------------------------
+  console.log("--- buildAiRequest output passes server validatePayload ---");
+  const { validatePayload } = await import("../api/generate-note");
+  const req = buildAiRequest(baseInput());
+  const err = validatePayload(req);
+  assert(err === null, `buildAiRequest must satisfy server validation, got: ${err}`);
+  // Also check the freeform branch.
+  const reqFree = buildAiRequest(
+    baseInput({ inputMode: "freeform", freeText: "随便写一段" }),
+  );
+  assert(
+    validatePayload(reqFree) === null,
+    "freeform buildAiRequest must satisfy server validation",
+  );
 }
 
 runFetchMocks()

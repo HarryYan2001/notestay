@@ -258,6 +258,41 @@ async function run() {
     delete process.env.ZHIPU_API_KEY;
   }
 
+  // ------------------------------------------------------------------
+  // Branch: upstream Zhipu call aborts (timeout). The handler must
+  // surface this as a 504 with a Chinese "AI 模型响应超时" prefix so the
+  // UI can show an actionable message — NOT a 502 lumped in with auth
+  // failures, and NOT a bare crash.
+  // ------------------------------------------------------------------
+  console.log("--- handler: upstream timeout/abort surfaces as 504 JSON ---");
+  process.env.ZHIPU_API_KEY = "dummy-key-for-test";
+  try {
+    // Simulate the abort path: fetch immediately rejects with the same
+    // shape modern runtimes use when AbortController.abort() fires.
+    // callZhipu must recognise this and rephrase as "Zhipu API 调用超时",
+    // which the handler must then map to a 504 with the Chinese
+    // "AI 模型响应超时" prefix the UI shows to the user.
+    globalThis.fetch = (async () => {
+      const err: any = new Error("signal is aborted without reason");
+      err.name = "AbortError";
+      throw err;
+    }) as any;
+    const res = mockRes();
+    await handler(mockReq({ body: validPayload }), res);
+    assert(res.statusCode === 504, `expected 504 on abort, got ${res.statusCode}`);
+    assert(
+      /AI 模型响应超时/.test(res.body?.error || ""),
+      `504 must include 'AI 模型响应超时', got: ${res.body?.error}`,
+    );
+    assert(
+      !/signal is aborted/i.test(res.body?.error || ""),
+      "raw 'signal is aborted' must NOT leak into the error message",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.ZHIPU_API_KEY;
+  }
+
   console.log("API handler smoke tests OK");
 }
 

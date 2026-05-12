@@ -256,6 +256,13 @@ export interface ZhipuRawResponse {
   error?: { message?: string } | string;
 }
 
+// Default server-side budget for a single Zhipu call. Kept ~5s below the
+// Vercel Hobby plan maxDuration (60s) so the upstream call has a chance to
+// finish cleanly and we can format a readable error before the platform
+// kills the invocation. If you raise maxDuration in vercel.json (Pro plan
+// allows up to 300s), raise this too.
+export const ZHIPU_DEFAULT_TIMEOUT_MS = 55_000;
+
 // Call Zhipu's OpenAI-compatible chat-completions endpoint. Returns the raw
 // assistant content string; callers feed it to parseModelOutput. Throws on
 // non-2xx, timeout, or empty content.
@@ -266,33 +273,46 @@ export async function callZhipu(
 ): Promise<string> {
   const model = opts.model || ZHIPU_DEFAULT_MODEL;
   const endpoint = opts.endpoint || ZHIPU_ENDPOINT;
-  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const timeoutMs = opts.timeoutMs ?? ZHIPU_DEFAULT_TIMEOUT_MS;
   const fetchFn = opts.fetchImpl || (globalThis.fetch as typeof fetch);
   if (!fetchFn) throw new Error("当前运行环境缺少 fetch 实现。");
   if (!opts.apiKey) throw new Error("ZHIPU_API_KEY 未配置。");
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    const res = await fetchFn(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${opts.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.85,
-        top_p: 0.9,
-        max_tokens: 2048,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-      signal: controller.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetchFn(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${opts.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.85,
+          top_p: 0.9,
+          max_tokens: 2048,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (timedOut || isAbortLike(err)) {
+        const seconds = Math.round(timeoutMs / 1000);
+        throw new Error(`Zhipu API 调用超时（${seconds} 秒未返回）`);
+      }
+      throw err;
+    }
     if (!res.ok) {
       const text = await safeReadText(res);
       throw new Error(`Zhipu API ${res.status}: ${text.slice(0, 500)}`);
@@ -313,6 +333,15 @@ export async function callZhipu(
   } finally {
     clearTimeout(timer);
   }
+}
+
+function isAbortLike(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: string; code?: string; message?: string };
+  if (e.name === "AbortError") return true;
+  if (e.code === "ABORT_ERR") return true;
+  if (typeof e.message === "string" && /aborted/i.test(e.message)) return true;
+  return false;
 }
 
 async function safeReadText(res: Response): Promise<string> {
