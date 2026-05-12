@@ -471,7 +471,10 @@ export function PageEditor({
       e.preventDefault();
       e.stopPropagation();
       const delta = e.deltaY > 0 ? -0.08 : 0.08;
-      const next = clamp(layer.zoom + delta, 0.5, 3);
+      // Min zoom is 1 so the image always covers the frame edge-to-edge —
+      // shrinking below 1 would expose the page background inside the layer
+      // frame, making the module visibly larger than the photo itself.
+      const next = clamp(layer.zoom + delta, 1, 3);
       updateLayer(layer.id, { zoom: Number(next.toFixed(2)) });
     };
     stage.addEventListener("wheel", handler, { passive: false });
@@ -660,7 +663,10 @@ export function PageEditor({
                         height: "100%",
                         objectFit: "cover",
                         objectPosition: `${l.offsetX}% ${l.offsetY}%`,
-                        transform: `scale(${l.zoom})`,
+                        // Render zoom is clamped to >= 1: combined with
+                        // object-fit cover this guarantees the photo fills
+                        // the layer frame with no exposed page background.
+                        transform: `scale(${Math.max(1, l.zoom)})`,
                         transformOrigin: `${l.offsetX}% ${l.offsetY}%`,
                         pointerEvents: "none",
                       }}
@@ -1517,7 +1523,7 @@ function ImageLayerPanel({
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 hover-elevate"
-          onClick={() => onChange({ zoom: Math.max(0.5, Number((layer.zoom - 0.08).toFixed(2))) })}
+          onClick={() => onChange({ zoom: Math.max(1, Number((layer.zoom - 0.08).toFixed(2))) })}
           data-testid={`${testIdPrefix}-zoom-out`}
         >
           <ZoomOut className="size-3" /> 缩小
