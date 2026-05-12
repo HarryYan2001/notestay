@@ -117,10 +117,15 @@ export interface CoverDesign {
   layers: CoverLayer[];
 }
 
+// A page design — same structure as cover; cover is page 0.
+export type PageDesign = CoverDesign;
+
 export interface StickerOverlay {
   id: string;
+  // which page this sticker is bound to (0 = cover, 1+ = inner image pages)
+  pageIndex: number;
   text: string;
-  // % of preview width/height
+  // % of page width/height
   x: number;
   y: number;
   rotation: number;
@@ -138,8 +143,9 @@ export interface GeneratedNote {
   tags: string[];
   commentSeeds: string[];
   pageLayout: PageLayout[];
-  cover: CoverDesign;
-  stickers: StickerOverlay[];
+  cover: CoverDesign;                       // alias to pageDesigns[0] for back-compat
+  pageDesigns: Record<number, PageDesign>;  // keyed by pageLayout.index
+  stickers: StickerOverlay[];               // each has pageIndex binding
   warnings: string[];
 }
 
