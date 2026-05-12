@@ -1,6 +1,6 @@
 // Vercel serverless function: POST /api/generate-note
 //
-// Accepts an AiGenerateRequest (see shared/ai-prompt.ts), calls Zhipu's
+// Accepts an AiGenerateRequest (see api/_ai-prompt.ts), calls Zhipu's
 // (BigModel) OpenAI-compatible chat-completions endpoint, and returns a
 // strict-JSON AiGenerateResponse the client can render.
 //
@@ -9,33 +9,36 @@
 //   - ZHIPU_MODEL    (optional) — defaults to ZHIPU_DEFAULT_MODEL
 //
 // Vercel compatibility notes (this file is the canonical workaround for the
-// FUNCTION_INVOCATION_FAILED bug observed on master before this change):
+// FUNCTION_INVOCATION_FAILED / "Cannot find module" production bugs):
 //
-//   1. NO top-level imports of repo modules. The whole repo is ESM
-//      (`"type": "module"`), and Vercel's serverless bundler has shown
-//      flakiness importing TS files from sibling directories (`../shared`)
-//      at module-init time — when that fails the function crashes BEFORE
-//      our handler runs, surfacing as Vercel's generic 500 page instead of
-//      our structured JSON. We defer that import into the handler body so
-//      a bundling failure shows up as a 500 JSON, and so the missing-key
-//      branch never needs to touch the shared module at all.
+//   1. The prompt + Zhipu wrapper runtime lives in `./_ai-prompt.ts`, a
+//      SIBLING file inside `api/`. The leading underscore tells Vercel not
+//      to expose it as its own serverless function (see
+//      https://github.com/vercel/vercel/discussions/4983). Sibling files in
+//      `api/` are always included in the function bundle, so we can use a
+//      plain static import here without risking the cross-directory tracer
+//      failures we saw with `../shared/ai-prompt`. Dynamic imports are
+//      avoided because Vercel's NFT cannot statically trace dynamic-import
+//      string paths — that was the bug that PR #28 introduced.
 //   2. NO `export const config = { runtime: ... }`. That field is a
 //      Next.js middleware concept; on a plain Vercel `api/*.ts` Node
 //      function it has historically caused init crashes.
-//   3. NO TypeScript path aliases (`@shared/...`). All imports are
-//      relative.
+//   3. NO TypeScript path aliases (`@shared/...`). All imports are relative
+//      and sibling-only.
 //   4. NO `process.env` reads or other side-effects at module top level.
 //   5. The handler is wrapped in a defensive try/catch so any unexpected
 //      throw is converted to a structured 500 JSON instead of
 //      FUNCTION_INVOCATION_FAILED.
 
-// Type-only imports are erased at compile time and cannot trigger a
-// runtime resolution failure. Runtime values are loaded inside the handler
-// via dynamic import().
-import type {
-  AiGenerateRequest,
-  AiGenerateResponse,
-} from "../shared/ai-prompt";
+import {
+  ZHIPU_DEFAULT_MODEL,
+  buildSystemPrompt,
+  buildUserPrompt,
+  callZhipu,
+  parseModelOutput,
+  type AiGenerateRequest,
+  type AiGenerateResponse,
+} from "./_ai-prompt";
 
 // Vercel's Node helpers don't require @vercel/node types; we describe the
 // minimal request/response shape we depend on so the file compiles cleanly
@@ -52,10 +55,6 @@ export interface VercelLikeResponse {
   setHeader(name: string, value: string): void;
   end?: (body?: any) => void;
 }
-
-// Fallback constant used only if the shared module fails to load. The real
-// value lives in shared/ai-prompt.ts and is preferred when available.
-const FALLBACK_ZHIPU_DEFAULT_MODEL = "glm-4.5";
 
 export default async function handler(
   req: VercelLikeRequest,
@@ -85,9 +84,6 @@ export default async function handler(
       return res.status(405).json({ error: "仅支持 POST 请求。" });
     }
 
-    // Missing-key branch: handled with ZERO external imports so that even a
-    // catastrophic bundling failure of shared/ai-prompt.ts still produces
-    // structured JSON the UI can match against.
     const apiKey = process.env.ZHIPU_API_KEY;
     if (!apiKey) {
       return res.status(503).json({
@@ -96,9 +92,6 @@ export default async function handler(
       });
     }
 
-    // Parse + validate the body using only locally-defined helpers (no
-    // shared-module dependency). This means a malformed body returns 400
-    // even if the shared module is broken on this deployment.
     let payload: AiGenerateRequest;
     try {
       payload = parseBody(req.body) as AiGenerateRequest;
@@ -112,33 +105,16 @@ export default async function handler(
       return res.status(400).json({ error: validationError });
     }
 
-    // Lazily load the shared prompt + Zhipu wrapper. If this dynamic import
-    // throws (e.g. because Vercel failed to bundle the file), surface a
-    // structured 500 JSON rather than crashing the function.
-    let shared: typeof import("../shared/ai-prompt");
-    try {
-      shared = await import("../shared/ai-prompt");
-    } catch (err) {
-      const msg = (err as Error)?.message || "Unknown error";
-      console.error("[api/generate-note] failed to load shared module:", msg);
-      return res.status(500).json({
-        error: `内部模块加载失败：${msg}`,
-      });
-    }
-
-    const model =
-      process.env.ZHIPU_MODEL ||
-      shared.ZHIPU_DEFAULT_MODEL ||
-      FALLBACK_ZHIPU_DEFAULT_MODEL;
+    const model = process.env.ZHIPU_MODEL || ZHIPU_DEFAULT_MODEL;
 
     try {
-      const systemPrompt = shared.buildSystemPrompt();
-      const userPrompt = shared.buildUserPrompt(payload);
-      const raw = await shared.callZhipu(systemPrompt, userPrompt, {
+      const systemPrompt = buildSystemPrompt();
+      const userPrompt = buildUserPrompt(payload);
+      const raw = await callZhipu(systemPrompt, userPrompt, {
         apiKey,
         model,
       });
-      const parsed: AiGenerateResponse = shared.parseModelOutput(raw);
+      const parsed: AiGenerateResponse = parseModelOutput(raw);
       return res.status(200).json(parsed);
     } catch (err) {
       const msg = (err as Error).message || "Unknown error";
