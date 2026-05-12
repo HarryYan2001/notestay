@@ -57,7 +57,10 @@ export function CoverFlat({ cover, width = 320 }: Props) {
                     height: "100%",
                     objectFit: "cover",
                     objectPosition: `${l.offsetX}% ${l.offsetY}%`,
-                    transform: `scale(${l.zoom})`,
+                    // Floor render zoom at 1 so the image fills the frame
+                    // edge-to-edge — the module bounds always match the
+                    // visible photo bounds, no exposed background.
+                    transform: `scale(${Math.max(1, l.zoom)})`,
                     transformOrigin: `${l.offsetX}% ${l.offsetY}%`,
                   }}
                 />

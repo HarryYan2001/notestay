@@ -254,7 +254,9 @@ async function drawImageLayer(
   roundedRect(ctx, -w / 2, -h / 2, w, h, layer.radius * scale);
   ctx.clip();
   if (img) {
-    const zoom = Math.max(0.2, layer.zoom || 1);
+    // Floor zoom at 1 so the rasterised export mirrors the in-editor cover
+    // behavior: the image always fills the frame, never separates from it.
+    const zoom = Math.max(1, layer.zoom || 1);
     const coverScale = Math.max(w / img.naturalWidth, h / img.naturalHeight) * zoom;
     const drawW = img.naturalWidth * coverScale;
     const drawH = img.naturalHeight * coverScale;
