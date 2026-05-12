@@ -194,7 +194,11 @@ export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: 
     }
   }
 
-  const showRepair = repairOpen || status === "error" || status === "nav_unreachable" || status === "popup_blocked" || status === "copy_blocked";
+  // Visibility is driven solely by repairOpen, so a user-initiated close is
+  // sticky. Failures still surface the panel — they set repairOpen=true on the
+  // transition into the failure state, but the user can collapse it
+  // afterwards without it springing back open on every render.
+  const showRepair = repairOpen;
 
   return (
     <section

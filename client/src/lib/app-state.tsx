@@ -1,4 +1,12 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   AppInputState,
   FrameworkField,
@@ -8,6 +16,10 @@ import type {
   StyleKey,
   UploadedImage,
 } from "./types";
+import {
+  readFrameworkFromUrl,
+  writeFrameworkToUrl,
+} from "./framework-persist";
 
 const DEFAULT_FRAMEWORK: FrameworkField[] = [
   { id: "f1", label: "第一印象", value: "" },
@@ -71,8 +83,30 @@ export function hasFreeformContent(s: AppInputState): boolean {
 const Ctx = createContext<AppCtx | null>(null);
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppInputState>(DEFAULT_INPUT);
+  // Hydrate framework from URL synchronously so the first render already shows
+  // the user's last-known custom framework. We keep this read inside the
+  // initializer (lazy) to avoid running it during SSR or tests where window
+  // may not exist; the helper returns null in that case.
+  const [state, setState] = useState<AppInputState>(() => {
+    const persisted = readFrameworkFromUrl();
+    if (persisted && persisted.length > 0) {
+      return { ...DEFAULT_INPUT, framework: persisted };
+    }
+    return DEFAULT_INPUT;
+  });
   const [generated, setGenerated] = useState<GeneratedNote | null>(null);
+
+  // Persist framework state to the URL whenever it changes. This is our
+  // refresh-survival mechanism on static deploys (GitHub Pages) without
+  // touching localStorage / sessionStorage / IndexedDB / cookies.
+  // We don't write on the very first effect run because the value just came
+  // *from* the URL — writing back would be a no-op churn that pushes a
+  // history entry on browsers that ignore replaceState semantics.
+  const initialFrameworkRef = useRef(state.framework);
+  useEffect(() => {
+    if (state.framework === initialFrameworkRef.current) return;
+    writeFrameworkToUrl(state.framework);
+  }, [state.framework]);
 
   const value = useMemo<AppCtx>(
     () => ({

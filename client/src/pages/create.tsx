@@ -11,6 +11,10 @@ import { STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
 import type { InputMode, UploadedImage } from "@/lib/types";
 import {
+  FRAMEWORK_PRESETS,
+  instantiatePreset,
+} from "@/lib/framework-presets";
+import {
   Plus,
   Trash2,
   Upload,
@@ -20,6 +24,7 @@ import {
   Info,
   ChevronRight,
   ArrowRight,
+  LayoutTemplate,
 } from "lucide-react";
 
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
@@ -59,6 +64,21 @@ export default function CreatePage() {
   }
   function removeFrameworkField(id: string) {
     app.setFramework(app.state.framework.filter((f) => f.id !== id));
+  }
+  // Apply a preset template. If the user has already filled in any value,
+  // confirm before replacing — preset application replaces the framework
+  // structure (labels and order), not values, since values are personal.
+  function applyFrameworkPreset(key: string) {
+    const preset = FRAMEWORK_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    const hasValues = app.state.framework.some((f) => f.value.trim().length > 0);
+    if (hasValues) {
+      const ok = window.confirm(
+        `应用「${preset.name}」模板会替换当前所有维度,已填写的内容将被清空,是否继续?`,
+      );
+      if (!ok) return;
+    }
+    app.setFramework(instantiatePreset(preset));
   }
 
   function onPickFiles(files: FileList | null) {
@@ -218,6 +238,32 @@ export default function CreatePage() {
 
               {app.state.inputMode === "framework" ? (
                 <div className="space-y-3">
+                  <div
+                    className="rounded-xl border border-dashed border-border bg-card/40 p-3 space-y-2"
+                    data-testid="framework-presets"
+                  >
+                    <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
+                      <LayoutTemplate className="size-3.5" />
+                      套用框架模板(可编辑维度名称,刷新后自动保留)
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {FRAMEWORK_PRESETS.map((p) => (
+                        <button
+                          key={p.key}
+                          type="button"
+                          onClick={() => applyFrameworkPreset(p.key)}
+                          className="text-left rounded-xl border border-card-border bg-background px-3 py-2 hover-elevate"
+                          data-testid={`framework-preset-${p.key}`}
+                          title={p.description}
+                        >
+                          <div className="text-xs font-semibold">{p.name}</div>
+                          <div className="text-[10px] text-muted-foreground line-clamp-1">
+                            {p.description}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   {app.state.framework.map((f) => (
                     <div
                       key={f.id}
