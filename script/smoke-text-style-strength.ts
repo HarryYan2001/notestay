@@ -3,21 +3,25 @@
 // The control lets the user dial how aggressively NoteStay imitates the
 // OCR-learned text style of the uploaded target-note screenshot:
 //   - light:  only learn 语气 / 标题节奏, keep NoteStay's native voice
-//   - medium: default, balanced (PR #23 behavior)
+//   - medium: default, balanced
 //   - high:   strong mimicry of 标题节奏 / emoji 密度 / 口吻 / CTA hooks
 //
-// Visual / image-style learning is independent and must remain unaffected by
-// this control.
+// Visual / image-style learning has been REMOVED — uploading a screenshot
+// only learns the body text style; it does not influence cover or page
+// designs. This test asserts the no-visual-influence behavior alongside
+// the strength-driven body changes.
 //
 // Assertions:
 //   1) Pure decorator functions (applyTextStyleToTitle / ToBodyOpening /
 //      ToClosing) respect the strength parameter and are deterministic.
-//   2) generateNote produces distinguishable output across the three levels.
-//   3) high is strictly more stylistically assertive than light on at least
-//      one of {title length / emoji presence / opener prefix / closing CTA}.
+//   2) generateNote produces distinguishable output across the three levels,
+//      INCLUDING the body sections themselves (not just title/opening/
+//      closing).
+//   3) high body is strictly more stylistically assertive than light along
+//      multiple axes (tone prefix, emoji, punctuation, vocative).
 //   4) No level copies reference phrases verbatim from the OCR text.
-//   5) Visual cues (palette/accent) come through identically regardless of
-//      the chosen strength — image-style learning is independent.
+//   5) Uploading a screenshot does NOT change the cover background or page
+//      designs regardless of strength — that behavior was removed.
 //   6) The warning string surfaces the chosen strength label.
 //   7) The screenshotStyle.text summary carries `strength` + `strengthLabel`.
 //   8) create.tsx wires the segmented control with stable testids and the
@@ -214,19 +218,6 @@ function makeRef(ocr: string): ScreenshotRef {
   return {
     previewUrl: null,
     filename: "ref.png",
-    width: 100,
-    height: 200,
-    palette: ["#cccccc", "#bbbbbb", "#aaaaaa"],
-    accent: "#cc55aa",
-    brightness: 0.5,
-    saturation: 0.1,
-    contrast: 0.1,
-    warmth: 0,
-    textDensity: 0.1,
-    edgeDensity: 0.2,
-    mood: "neutral",
-    cues: [],
-    status: "ref",
     textStyle,
   };
 }
@@ -304,32 +295,171 @@ function runAt(strength: TextStyleStrength, ocr: string) {
   }
 }
 
-// ---------- 4) visual image-style learning is unaffected by strength ----------
+// ---------- 3b) body sections themselves shift with strength ----------
+//
+// The original bug: the user complained the body 正文 didn't visibly change
+// even at high strength. Title / opening / closing changed but section
+// paragraphs read the same. These assertions cover that gap.
 
 {
-  // Same screenshot ref, three strengths. The visual layer (palette / accent /
-  // cover gradient) should be identical because text strength only governs
-  // textual decorators.
+  // Extract the rendered body section bodies. Sections are emoji+label
+  // headed; their content is the line(s) BETWEEN section headers.
+  function extractSectionBodies(body: string): string[] {
+    const lines = body.split("\n");
+    const out: string[] = [];
+    let buf: string[] = [];
+    let inSection = false;
+    const SECTION_HEAD_RE = /^[\p{Extended_Pictographic}☀-➿✨][^\n]{0,3}\s+\S/u;
+    for (const line of lines) {
+      // Heuristic: a "section head" line starts with an emoji followed by a
+      // short Chinese label. We treat everything between heads as section
+      // body text. We skip the opening hook, context line, and closing —
+      // they're the lines BEFORE the first head and AFTER the last body.
+      if (SECTION_HEAD_RE.test(line)) {
+        if (inSection && buf.length) out.push(buf.join("\n").trim());
+        buf = [];
+        inSection = true;
+        continue;
+      }
+      if (inSection) buf.push(line);
+    }
+    if (inSection && buf.length) out.push(buf.join("\n").trim());
+    return out.filter(Boolean);
+  }
+
+  const light = runAt("light", DRAMATIC_TEXT);
+  const medium = runAt("medium", DRAMATIC_TEXT);
+  const high = runAt("high", DRAMATIC_TEXT);
+
+  const lightBodies = extractSectionBodies(light.body);
+  const mediumBodies = extractSectionBodies(medium.body);
+  const highBodies = extractSectionBodies(high.body);
+
+  console.log("light section bodies:", lightBodies);
+  console.log("high  section bodies:", highBodies);
+
+  assert(lightBodies.length > 0, "test setup must yield at least one section");
+  assert(
+    lightBodies.length === highBodies.length,
+    `section count should match across strengths: light=${lightBodies.length} high=${highBodies.length}`,
+  );
+
+  // Light bodies should be (nearly) untouched for a dramatic reference,
+  // because light-strength body transform is a no-op for non-playful tones.
+  // High bodies must differ from light bodies on at least one section.
+  let anyDiff = false;
+  for (let i = 0; i < lightBodies.length; i++) {
+    if (lightBodies[i] !== highBodies[i]) anyDiff = true;
+  }
+  assert(
+    anyDiff,
+    `high body sections must differ from light:\nlight=${JSON.stringify(lightBodies)}\nhigh=${JSON.stringify(highBodies)}`,
+  );
+  // Medium should also differ from light on at least one section (it adds
+  // tone prefix to the first section of section 0).
+  let anyMediumDiff = false;
+  for (let i = 0; i < lightBodies.length; i++) {
+    if (lightBodies[i] !== mediumBodies[i]) anyMediumDiff = true;
+  }
+  assert(
+    anyMediumDiff,
+    `medium body sections must differ from light on at least one section`,
+  );
+
+  // Stylistic-signal counters across the entire body section block.
+  const lightJoined = lightBodies.join("\n");
+  const highJoined = highBodies.join("\n");
+  const punctCount = (s: string) =>
+    (s.match(/[!！]{2,}|[?？]{2,}/g) ?? []).length;
+  const emojiCount = (s: string) => {
+    let n = 0;
+    for (const ch of s) {
+      const code = ch.codePointAt(0) ?? 0;
+      if (
+        (code >= 0x1f300 && code <= 0x1faff) ||
+        (code >= 0x2600 && code <= 0x27bf) ||
+        (code >= 0x1f900 && code <= 0x1f9ff)
+      ) n++;
+    }
+    return n;
+  };
+  const vocativeCount = (s: string) =>
+    (s.match(/姐妹们|宝子们|家人们/g) ?? []).length;
+
+  const lightPunct = punctCount(lightJoined);
+  const highPunct = punctCount(highJoined);
+  const lightEmoji = emojiCount(lightJoined);
+  const highEmoji = emojiCount(highJoined);
+  const lightVoc = vocativeCount(lightJoined);
+  const highVoc = vocativeCount(highJoined);
+
+  console.log(
+    `body signals — punct l=${lightPunct} h=${highPunct} | emoji l=${lightEmoji} h=${highEmoji} | vocative l=${lightVoc} h=${highVoc}`,
+  );
+
+  // High must outscore light on at least TWO of the three axes for a
+  // dramatic reference (multi-axis signal — heavier overall body styling).
+  let axes = 0;
+  if (highPunct > lightPunct) axes++;
+  if (highEmoji > lightEmoji) axes++;
+  if (highVoc > lightVoc) axes++;
+  assert(
+    axes >= 2,
+    `high body should outscore light on at least 2 of {punct,emoji,vocative}, got axes=${axes}`,
+  );
+}
+
+// ---------- 3c) healing tone bends body sections too ----------
+
+{
+  const light = runAt("light", HEALING_TEXT);
+  const high = runAt("high", HEALING_TEXT);
+  assert(
+    light.body !== high.body,
+    `healing high body must differ from healing light body`,
+  );
+  // High healing should sprinkle 轻轻/悄悄/慢慢 register markers in the
+  // body section block (not just the opening). Light should not.
+  assert(
+    /轻轻地|悄悄地|慢慢说/.test(high.body),
+    `healing high body should carry the 治愈 register, got body=${high.body}`,
+  );
+}
+
+const HEALING_TEXT_LOCAL = `轻轻推开门，整间房像被阳光泡过一样温柔。
+悄悄说一句：床品柔软到让人心安。
+慢慢走到窗边，茶香和木质的味道把整个下午都治愈了。
+若你也想要一个治愈的周末，码住这家就好。`;
+// Re-declared here for the assertion above so the const is available at
+// module scope (the earlier HEALING_TEXT lives at the top of this file).
+void HEALING_TEXT_LOCAL;
+
+// ---------- 4) cover + page visuals are NOT influenced by the screenshot ----------
+
+{
+  // Uploading a screenshot must NOT change the cover background or page
+  // designs at any strength — visual learning was removed. We compare to a
+  // baseline run that has no screenshot at all.
+  const baselineNoRef = generateNote(baseInput());
   const ref = makeRef(DRAMATIC_TEXT);
   const a = generateNote(baseInput({ screenshotRef: ref, textStyleStrength: "light" }));
   const b = generateNote(baseInput({ screenshotRef: ref, textStyleStrength: "medium" }));
   const c = generateNote(baseInput({ screenshotRef: ref, textStyleStrength: "high" }));
   for (const x of [a, b, c]) {
-    assert(x.screenshotStyle?.hasInput === true, "visual style should still be learned");
+    assert(x.screenshotStyle?.hasInput === true, "summary should mark hasInput when a ref was uploaded");
+    assert(
+      x.cover.background === baselineNoRef.cover.background,
+      `screenshot must NOT change cover background, got with-ref=${x.cover.background} baseline=${baselineNoRef.cover.background}`,
+    );
+    // No accent sticker should be added by screenshot upload.
+    assert(
+      !x.cover.layers.some((l) => l.id.startsWith("lyr_acc_")),
+      "screenshot must NOT inject an accent sticker layer",
+    );
   }
   assert(
-    a.screenshotStyle!.palette.join("|") === c.screenshotStyle!.palette.join("|"),
-    "palette should be identical across strengths",
-  );
-  assert(
-    a.screenshotStyle!.accent === c.screenshotStyle!.accent,
-    "accent should be identical across strengths",
-  );
-  // The cover background gradient is derived from the screenshot palette, so
-  // it must match across strengths too.
-  assert(
     a.cover.background === c.cover.background,
-    `cover background must match across strengths: a=${a.cover.background} c=${c.cover.background}`,
+    `cover background must match across strengths`,
   );
 }
 

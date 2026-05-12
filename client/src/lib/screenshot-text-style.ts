@@ -562,5 +562,308 @@ export function textStyleWarningMessage(
   if (!p.hasText) return null;
   const tone = TONE_LABELS[p.tone];
   const strengthLabel = TEXT_STYLE_STRENGTH_LABELS[strength];
-  return `已学习参考截图文字风格（${tone}·${strengthLabel}模仿）：本次生成的标题、正文与结尾会沿用此节奏与语感，但不会复制原文。`;
+  return `已学习参考截图文字风格（${tone}·${strengthLabel}模仿）：本次生成的标题、正文段落与结尾会沿用此节奏与语感，但不会复制原文。`;
+}
+
+// ---------- body-section transformer ----------
+//
+// Rewrites the body of an emoji-headed section so that the OCR-learned text
+// style is visible in the 正文 paragraphs, not just in the title / opening /
+// closing decorators. This is the function the user is complaining is
+// missing — without it, sections still read in NoteStay's default voice no
+// matter what the reference tone says.
+//
+// Inputs:
+//   - sectionText: user-derived body of one section, AFTER stripBanned and
+//     naturalizeUserLine have run. Always non-empty, may contain multiple
+//     sentences joined with sentence-ending punctuation.
+//   - p: learned text profile.
+//   - strength: light / medium / high.
+//   - seed: stable integer (e.g. the generator's seed + section index) so
+//     emoji / vocative / particle picks are deterministic for the same
+//     inputs and don't churn between regenerations.
+//   - sectionIndex: 0-based index of this section in the body. Used to
+//     decide where vocatives / CTA hooks land — they should not appear on
+//     every section.
+//
+// Strict guarantees (covered by smoke tests):
+//   - Never copies any phrase from `p` (we only use fixed in-code pools).
+//   - Never invents hotel facts — the user's words remain intact; we only
+//     rephrase rhythm, append particles/emoji, or rewire punctuation.
+//   - Light strength returns the input unchanged for tones other than
+//     `playful` (whose terminal 。→啦~ swap is purely cosmetic).
+//   - High strength is strictly more decorated than light (more particles,
+//     more emoji, stronger punctuation, vocative insertion).
+//
+// The transformer is intentionally additive: it rewrites/insets but never
+// deletes the user's substantive nouns, brands, room types, etc.
+export function applyTextStyleToBodySection(
+  sectionText: string,
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength,
+  seed: number,
+  sectionIndex: number,
+): string {
+  if (!p.hasText) return sectionText;
+  const raw = sectionText.trim();
+  if (!raw) return sectionText;
+  if (strength === "light") {
+    return lightBodyDecorate(raw, p, seed);
+  }
+  // Split into sentences, transform each, re-join.
+  const sentences = splitSentencesWithPunct(raw);
+  const out: string[] = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    out.push(
+      transformSentence(
+        s,
+        p,
+        strength,
+        seed + i * 31 + sectionIndex * 17,
+        i,
+        sentences.length,
+        sectionIndex,
+      ),
+    );
+  }
+  let joined = out.join("");
+  // High-strength vocative injection: prepend a tone-appropriate vocative
+  // ONLY to the first section's body (sectionIndex===0) and only when the
+  // reference actually used vocatives. Avoids stacking with the opening's
+  // own vocative — we check that the section doesn't already start with one.
+  if (
+    strength === "high" &&
+    sectionIndex === 0 &&
+    p.cues.includes("vocative_opener") &&
+    !/^(姐妹们|宝子们|家人们|兄弟们|uu们|集美们)/.test(joined)
+  ) {
+    const pool = ["姐妹们", "宝子们", "家人们"];
+    const head = pool[Math.abs(seed) % pool.length];
+    joined = `${head}，${joined}`;
+  }
+  // High-strength CTA tail injection on the LAST section: if the reference
+  // exhibits CTA cues, append a one-line nudge using a fixed bank (never
+  // copies source phrasing). Closing-line decoration already exists for
+  // the body's literal closing line; this one targets the last section
+  // body so the in-section pacing also reads CTA-driven.
+  if (
+    strength === "high" &&
+    sectionIndex === -1 // signal handled by caller — see generate.ts
+  ) {
+    // no-op — reserved for future use; the caller does CTA injection itself.
+  }
+  return joined;
+}
+
+// Convenience: apply the section transform across a list of sections. The
+// caller still controls section ordering — we only rewrite text in place.
+export function applyTextStyleToBodySections<
+  S extends { text: string },
+>(
+  sections: S[],
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength,
+  seed: number,
+): S[] {
+  if (!p.hasText) return sections;
+  return sections.map((s, i) => ({
+    ...s,
+    text: applyTextStyleToBodySection(s.text, p, strength, seed, i),
+  }));
+}
+
+// ---------- internal helpers ----------
+
+// Strong (high-emotion) emoji pool. We never echo `p.detectedEmoji` directly
+// when transforming the body — we restrict to this safe set indexed by the
+// reference's dominant tone, plus a fallback to detectedEmoji intersected
+// with the safe set.
+const SAFE_EMOJI: Record<TextTone, string[]> = {
+  dramatic: ["😭", "🥹", "😱", "😆", "💖"],
+  healing: ["🌿", "🍃", "🤍", "☁️"],
+  premium: ["🕯️", "🥃", "🌙"],
+  playful: ["🤭", "🫶", "💫"],
+  informative: [],
+};
+
+// Pick an emoji deterministically. Prefer the reference's detected emoji
+// that ALSO appears in our safe pool — this lets the reference's flavour
+// come through without copying anything unusual. Falls back to the safe
+// pool keyed by tone.
+function pickToneEmoji(p: ScreenshotTextStyleProfile, seed: number): string | null {
+  const pool = SAFE_EMOJI[p.tone];
+  if (pool.length === 0) return null;
+  const detectedSafe = p.detectedEmoji.filter((e) => pool.includes(e));
+  const chosen = detectedSafe.length > 0 ? detectedSafe : pool;
+  return chosen[Math.abs(seed) % chosen.length];
+}
+
+function splitSentencesWithPunct(text: string): string[] {
+  // Walk char-by-char; emit a sentence each time we hit one of 。！？!?…
+  // The terminator is included with the preceding sentence so re-joining
+  // is a simple concat. Trailing fragments without a terminator are kept
+  // as-is so we don't accidentally drop user content.
+  const out: string[] = [];
+  let buf = "";
+  for (const ch of text) {
+    buf += ch;
+    if (/[。！？!?…]/.test(ch)) {
+      out.push(buf);
+      buf = "";
+    }
+  }
+  if (buf.trim()) out.push(buf);
+  return out;
+}
+
+// Light strength: only the cheapest cosmetic transforms. We never prepend
+// vocatives, never rewire punctuation across the whole sentence, and never
+// add emoji. We only swap a terminal 。 → 啦~ for the playful register —
+// that's the same rule the opening decorator uses.
+function lightBodyDecorate(
+  text: string,
+  p: ScreenshotTextStyleProfile,
+  _seed: number,
+): string {
+  if (p.tone !== "playful") return text;
+  return text.replace(/。(?=$|\n)/g, "啦~");
+}
+
+// Tone-specific sentence transform. Operates on ONE sentence at a time so
+// we don't accidentally smash multi-sentence semantics together.
+function transformSentence(
+  sentence: string,
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength,
+  seed: number,
+  sentenceIdx: number,
+  totalSentences: number,
+  sectionIndex: number,
+): string {
+  let out = sentence;
+  const trailing = out.match(/[。！？!?…]$/)?.[0] ?? "";
+  const stem = trailing ? out.slice(0, -trailing.length) : out;
+  if (!stem.trim()) return out;
+
+  // Punctuation rewrite based on tone.
+  let newTail = trailing;
+  if (p.tone === "dramatic") {
+    if (trailing === "。") {
+      newTail = strength === "high" ? "！！！" : "！！";
+    } else if (trailing === "！" || trailing === "!") {
+      newTail = strength === "high" ? "！！！" : "！！";
+    }
+  } else if (p.tone === "healing") {
+    // Healing prefers softer pauses. Convert a trailing 。 to … for high
+    // strength only — medium keeps natural sentence ends but adds an
+    // emoji (see below).
+    if (trailing === "。" && strength === "high") {
+      newTail = "……";
+    }
+  } else if (p.tone === "playful") {
+    if (trailing === "。") {
+      newTail = strength === "high" ? "啦~" : "啦";
+    }
+  } else if (p.tone === "premium") {
+    // Premium prefers measured 。 — we keep punctuation but lean on
+    // long_storytelling rhythm instead.
+    newTail = trailing;
+  }
+
+  // Tone-prefix injection: dramatic / healing / premium / playful get a
+  // short stem prefix to seed the rhythm. Medium uses one phrase, high
+  // uses a longer, more emphatic variant. We only inject on a fraction
+  // of sentences so the whole paragraph doesn't feel mechanical.
+  const wantsPrefix =
+    (strength === "high" && sentenceIdx === 0) ||
+    (strength === "medium" && sentenceIdx === 0 && sectionIndex === 0);
+  let body = stem.trim();
+  if (wantsPrefix) {
+    const prefix = pickTonePrefix(p, strength, seed);
+    if (prefix && !alreadyStartsWith(body, prefix)) {
+      body = `${prefix}${body}`;
+    }
+  }
+
+  // Inline vocative for high strength: middle of a long section (not the
+  // first or last sentence) and only when the reference used a vocative.
+  if (
+    strength === "high" &&
+    p.cues.includes("vocative_opener") &&
+    totalSentences >= 3 &&
+    sentenceIdx === Math.floor(totalSentences / 2) &&
+    !/姐妹|宝子|家人们|兄弟们|uu们|集美/.test(body)
+  ) {
+    const pool = ["姐妹们", "宝子们"];
+    const head = pool[Math.abs(seed) % pool.length];
+    body = `${head}讲真，${body}`;
+  }
+
+  // Particle suffix for the playful register (high strength only —
+  // medium already swapped 。→啦 above).
+  if (p.tone === "playful" && strength === "high") {
+    if (!/[啦呀鸭哒嘛~]$/.test(body)) {
+      const particles = ["呀", "鸭", "哒"];
+      const pick = particles[Math.abs(seed + 3) % particles.length];
+      body = `${body}${pick}`;
+    }
+  }
+
+  // Append a tone emoji on selected sentences. Frequency scales with
+  // strength: medium adds one on the first sentence of a section,
+  // high adds one on every sentence when the reference is heavy_emoji
+  // or dramatic, every other sentence otherwise.
+  const emojiBudget =
+    strength === "high"
+      ? (p.cues.includes("heavy_emoji") || p.tone === "dramatic" ? 1 : sentenceIdx % 2 === 0 ? 1 : 0)
+      : (sentenceIdx === 0 && (p.cues.includes("heavy_emoji") || p.tone === "dramatic" || p.tone === "healing") ? 1 : 0);
+  if (emojiBudget > 0) {
+    const emoji = pickToneEmoji(p, seed);
+    if (emoji && !body.includes(emoji)) {
+      body = `${body}${emoji}`;
+    }
+  }
+
+  return `${body}${newTail}`;
+}
+
+function alreadyStartsWith(body: string, prefix: string): boolean {
+  // We compare on the first 6 characters of the prefix to allow small
+  // variations (the prefix bank doesn't include rare exact duplicates).
+  const probe = prefix.slice(0, 6);
+  return body.slice(0, 8).includes(probe);
+}
+
+function pickTonePrefix(
+  p: ScreenshotTextStyleProfile,
+  strength: TextStyleStrength,
+  seed: number,
+): string | null {
+  const idx = (n: number) => Math.abs(seed) % n;
+  if (p.tone === "dramatic") {
+    const medium = ["真的，", "讲真，", "实话说，"];
+    const high = ["真的真的，", "姐妹听我说，", "我没夸张，"];
+    const pool = strength === "high" ? high : medium;
+    return pool[idx(pool.length)];
+  }
+  if (p.tone === "healing") {
+    const medium = ["轻轻说，", "悄悄讲，", "慢慢看，"];
+    const high = ["轻轻地告诉你，", "悄悄地凑过来讲，", "慢慢说一句，"];
+    const pool = strength === "high" ? high : medium;
+    return pool[idx(pool.length)];
+  }
+  if (p.tone === "premium") {
+    const medium = ["静静讲，", "稳稳说，", "克制地讲，"];
+    const high = ["不动声色地讲一句，", "沉静地铺开来说，", "讲究一点的话，"];
+    const pool = strength === "high" ? high : medium;
+    return pool[idx(pool.length)];
+  }
+  if (p.tone === "playful") {
+    const medium = ["嘿嘿，", "哈哈，", "诶，"];
+    const high = ["嘿嘿嘿，", "哎呀这就，", "哈哈说真的，"];
+    const pool = strength === "high" ? high : medium;
+    return pool[idx(pool.length)];
+  }
+  return null;
 }

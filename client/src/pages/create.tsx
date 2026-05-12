@@ -10,11 +10,6 @@ import {
 import { STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
 import {
-  analyzeScreenshotFile,
-  SCREENSHOT_CUE_LABELS,
-  SCREENSHOT_MOOD_LABELS,
-} from "@/lib/screenshot-style";
-import {
   analyzeScreenshotText,
   DEFAULT_TEXT_STYLE_STRENGTH,
   TEXT_CUE_LABELS,
@@ -57,13 +52,9 @@ export default function CreatePage() {
   const screenshotInputRef = useRef<HTMLInputElement>(null);
   const [generating, setGenerating] = useState(false);
   const [agentStep, setAgentStep] = useState(0);
-  // True while we're decoding + analyzing the uploaded reference screenshot.
-  // Surfaced as a spinner so the user knows the analyzer is running.
-  const [analyzingScreenshot, setAnalyzingScreenshot] = useState(false);
-  // True while OCR is running on the uploaded screenshot. OCR is heavier than
-  // the pixel analyzer (we lazy-load tesseract.js + WASM + language data), so
-  // we expose it as a separate state and let the user see the visual analysis
-  // result first while text recognition continues in the background.
+  // True while OCR is running on the uploaded screenshot. OCR is heavier
+  // than a metadata read (we lazy-load tesseract.js + WASM + language data),
+  // so we expose it as a separate state and surface a spinner.
   const [ocrRunning, setOcrRunning] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
 
@@ -74,43 +65,21 @@ export default function CreatePage() {
       return;
     }
     setScreenshotError(null);
-    setAnalyzingScreenshot(true);
-    let visualRef: ScreenshotRef | null = null;
-    try {
-      const profile = await analyzeScreenshotFile(file);
-      visualRef = {
-        previewUrl: profile.previewUrl,
-        filename: profile.filename,
-        width: profile.width,
-        height: profile.height,
-        palette: profile.palette,
-        accent: profile.accent,
-        brightness: profile.brightness,
-        saturation: profile.saturation,
-        contrast: profile.contrast,
-        warmth: profile.warmth,
-        textDensity: profile.textDensity,
-        edgeDensity: profile.edgeDensity,
-        mood: profile.mood,
-        cues: profile.cues,
-        status: profile.status,
-        textStyle: null,
-      };
-      app.setScreenshotRef(visualRef);
-    } catch (err) {
-      console.warn("screenshot analysis failed", err);
-      setScreenshotError("截图分析失败,请换一张图片再试。");
-      setAnalyzingScreenshot(false);
-      if (screenshotInputRef.current) screenshotInputRef.current.value = "";
-      return;
-    } finally {
-      setAnalyzingScreenshot(false);
-      if (screenshotInputRef.current) screenshotInputRef.current.value = "";
-    }
+    // Create the preview thumbnail synchronously so the user sees feedback
+    // immediately. Visual analysis has been removed — we only need the
+    // object URL + filename to render the panel header.
+    const previewUrl = typeof URL !== "undefined" ? URL.createObjectURL(file) : null;
+    const baseRef: ScreenshotRef = {
+      previewUrl,
+      filename: file.name,
+      textStyle: null,
+    };
+    app.setScreenshotRef(baseRef);
+    if (screenshotInputRef.current) screenshotInputRef.current.value = "";
 
-    // OCR pass — runs after the visual analyzer so the user sees a result
-    // immediately, then the textual cues attach when tesseract.js finishes.
-    if (!visualRef) return;
+    // OCR pass — the only learning step. We extract the body text style
+    // of the reference note and persist it into app state. We never
+    // analyze pixels for visual cues anymore.
     setOcrRunning(true);
     try {
       const ocr = await recognizeScreenshotText(file);
@@ -129,14 +98,14 @@ export default function CreatePage() {
         status: ocr.ok
           ? textProfile.hasText
             ? textProfile.status
-            : "OCR 已运行,但未识别到足够的中文文字,本次仅学习视觉风格。"
-          : "OCR 未能加载,本次仅学习视觉风格(图片像素的色彩 / 版式 / 对比度)。",
+            : "OCR 已运行,但未识别到足够的中文文字,本次截图无法用于学习文字风格。"
+          : "OCR 未能加载,无法学习参考截图的文字风格。请尝试更换图片或稍后再试。",
         previewText: trimmedPreview,
       };
-      app.setScreenshotRef({ ...visualRef, textStyle });
+      app.setScreenshotRef({ ...baseRef, textStyle });
     } catch (err) {
       console.warn("OCR pipeline failed", err);
-      // Keep the visual-only ref — generation still works.
+      // Keep the bare ref — the panel shows the OCR failure status text.
     } finally {
       setOcrRunning(false);
     }
@@ -309,7 +278,7 @@ export default function CreatePage() {
           <div className="leading-relaxed text-foreground/85">
             <strong>内容规则:</strong>
             我们不会编造你未提供的价格、服务体验、设施细节;信息不足时会自动用中性表述或提示你补充。
-            爆款笔记截图仅用于学习色彩、版式与标题逻辑,不会复制原文与原图。
+            爆款笔记截图仅用于通过 OCR 学习正文文字风格(语气、节奏、emoji 与互动钩子),不会复制原文,也不会影响封面与内页的视觉效果。
           </div>
         </div>
 
@@ -542,10 +511,10 @@ export default function CreatePage() {
               </div>
             </Section>
 
-            {/* Screenshot-based viral-style learning */}
+            {/* Screenshot-based viral-style learning (OCR-only). */}
             <Section
-              title="爆款笔记学习(可选)"
-              subtitle="上传目标小红书笔记的截图,我们会学习它的色彩、版式与封面感(不复制原文与原图)"
+              title="爆款笔记正文风格学习(可选)"
+              subtitle="上传目标小红书笔记的截图,我们会通过 OCR 识别正文文字,只学习它的语气、节奏与互动钩子,不复制原文,也不影响封面与内页的视觉。"
               testId="section-viral"
             >
               <input
@@ -560,22 +529,17 @@ export default function CreatePage() {
                 <button
                   type="button"
                   onClick={() => screenshotInputRef.current?.click()}
-                  disabled={analyzingScreenshot}
-                  className="w-full rounded-xl border border-dashed border-border bg-card/60 p-5 flex flex-col items-center gap-2 text-sm text-muted-foreground hover-elevate disabled:opacity-60"
+                  className="w-full rounded-xl border border-dashed border-border bg-card/60 p-5 flex flex-col items-center gap-2 text-sm text-muted-foreground hover-elevate"
                   data-testid="button-upload-screenshot"
                 >
                   <div className="size-9 rounded-xl bg-primary/10 text-primary inline-flex items-center justify-center">
-                    {analyzingScreenshot ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <ImagePlus className="size-4" />
-                    )}
+                    <ImagePlus className="size-4" />
                   </div>
                   <div className="font-medium text-foreground">
-                    {analyzingScreenshot ? "正在分析截图风格…" : "点击上传目标笔记截图"}
+                    上传目标笔记截图,识别正文风格
                   </div>
                   <div className="text-xs">
-                    PNG / JPG / WEBP · 仅本会话内分析,不上传服务器
+                    PNG / JPG / WEBP · 仅本会话内通过 OCR 学习正文文字,不上传服务器
                   </div>
                 </button>
               ) : (
@@ -583,7 +547,6 @@ export default function CreatePage() {
                   refData={app.state.screenshotRef}
                   onReplace={() => screenshotInputRef.current?.click()}
                   onClear={clearScreenshot}
-                  busy={analyzingScreenshot}
                   ocrRunning={ocrRunning}
                   textStyleStrength={
                     app.state.textStyleStrength ?? DEFAULT_TEXT_STYLE_STRENGTH
@@ -601,10 +564,10 @@ export default function CreatePage() {
               )}
               <p className="mt-3 text-xs text-muted-foreground">
                 受小红书登录态和反爬规则限制,本应用不会去抓取链接。
-                我们会从截图的像素中学习色彩、对比度与版式,
-                并通过浏览器内 OCR 学习其中文字的情绪、节奏与互动钩子,
-                据此调整本次生成的标题、正文开头与结尾,
-                <strong>不会复制原文与原图。</strong>
+                我们在浏览器内通过 OCR 识别截图中的中文正文,
+                只学习它的语气、节奏、emoji 与互动钩子,
+                据此调整本次生成的标题、正文段落与结尾。
+                <strong>不会复制原文,也不会影响封面与内页的视觉。</strong>
               </p>
             </Section>
           </div>
@@ -790,15 +753,15 @@ function Field({
   );
 }
 
-// Renders the uploaded reference-note screenshot + the cues we learned from
-// its pixels. Visible only after the user picks a screenshot. The actual
-// pixel analysis runs in `onPickScreenshot` and persists into app state, so
-// rendering here is a pure projection of the learned profile.
+// Renders the uploaded reference-note screenshot + the OCR-derived text
+// style we learned from it. Visible only after the user picks a screenshot.
+// Visual / image-style learning has been removed — we no longer surface
+// palette, mood, accent or visual cue chips. Only the thumbnail + OCR
+// progress + text-style summary are shown.
 function ScreenshotPanel({
   refData,
   onReplace,
   onClear,
-  busy,
   ocrRunning,
   textStyleStrength,
   onChangeTextStyleStrength,
@@ -806,15 +769,11 @@ function ScreenshotPanel({
   refData: ScreenshotRef;
   onReplace: () => void;
   onClear: () => void;
-  busy: boolean;
   ocrRunning: boolean;
   textStyleStrength: TextStyleStrength;
   onChangeTextStyleStrength: (s: TextStyleStrength) => void;
 }) {
   const [showOcrText, setShowOcrText] = useState(false);
-  const moodLabel =
-    SCREENSHOT_MOOD_LABELS[refData.mood as keyof typeof SCREENSHOT_MOOD_LABELS] ??
-    refData.mood;
   const textStyle = refData.textStyle;
   const textToneLabel = textStyle
     ? TEXT_TONE_LABELS[textStyle.tone as keyof typeof TEXT_TONE_LABELS] ?? textStyle.tone
@@ -825,8 +784,6 @@ function ScreenshotPanel({
     ocrStatus = "正在识别截图中的文字…(首次需下载 OCR 引擎,可能需要数十秒)";
   } else if (!textStyle) {
     ocrStatus = "文字识别尚未开始或已被跳过。";
-  } else if (!textStyle.hasText) {
-    ocrStatus = textStyle.status;
   } else {
     ocrStatus = textStyle.status;
   }
@@ -849,67 +806,21 @@ function ScreenshotPanel({
         )}
         <div className="flex-1 min-w-0 space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
-            <span
-              className="inline-flex items-center rounded-full bg-foreground text-background px-2 py-0.5 text-[10px] font-semibold"
-              data-testid="screenshot-learning-mood"
-            >
-              {moodLabel}
-            </span>
             {refData.filename && (
               <span
-                className="text-[10px] text-muted-foreground truncate max-w-[12rem]"
+                className="text-[10px] text-muted-foreground truncate max-w-[16rem]"
                 data-testid="screenshot-learning-filename"
                 title={refData.filename}
               >
                 {refData.filename}
               </span>
             )}
-            <div
-              className="flex items-center gap-1"
-              data-testid="screenshot-learning-palette"
-            >
-              {refData.palette.map((c, i) => (
-                <span
-                  key={`${c}_${i}`}
-                  className="size-3.5 rounded-full border border-card-border"
-                  style={{ backgroundColor: c }}
-                  data-testid={`screenshot-palette-${i}`}
-                  title={c}
-                />
-              ))}
-              <span
-                className="size-3.5 rounded-full ring-2 ring-offset-1 ring-foreground/60 border border-card-border"
-                style={{ backgroundColor: refData.accent }}
-                data-testid="screenshot-accent"
-                title={`accent ${refData.accent}`}
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-1">
-            {refData.cues.length === 0 ? (
-              <span
-                className="text-[10px] text-muted-foreground"
-                data-testid="screenshot-learning-empty-cues"
-              >
-                未提取到额外的版式特征,本次仅沿用色彩基调。
-              </span>
-            ) : (
-              refData.cues.map((cue) => (
-                <span
-                  key={cue}
-                  className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium border border-primary/30"
-                  data-testid={`screenshot-cue-${cue}`}
-                >
-                  {SCREENSHOT_CUE_LABELS[cue as keyof typeof SCREENSHOT_CUE_LABELS] ?? cue}
-                </span>
-              ))
-            )}
           </div>
           <p
             className="text-[10px] text-muted-foreground leading-relaxed"
             data-testid="screenshot-learning-status-text"
           >
-            {refData.status}
+            截图只用于 OCR 识别正文文字,以学习语气与节奏;封面、内页与图片风格完全不受影响。
           </p>
         </div>
       </div>
@@ -1058,16 +969,16 @@ function ScreenshotPanel({
         <button
           type="button"
           onClick={onReplace}
-          disabled={busy}
+          disabled={ocrRunning}
           className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate disabled:opacity-60"
           data-testid="button-screenshot-replace"
         >
-          {busy ? (
+          {ocrRunning ? (
             <Loader2 className="size-3 animate-spin" />
           ) : (
             <ImagePlus className="size-3" />
           )}
-          {busy ? "正在分析…" : "换一张截图"}
+          {ocrRunning ? "正在识别文字…" : "换一张截图"}
         </button>
         <button
           type="button"
