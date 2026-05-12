@@ -159,9 +159,16 @@ export interface AiGenerateOptions {
   fetchImpl?: typeof fetch;
   // Override endpoint for tests. Defaults to relative /api/generate-note.
   endpoint?: string;
-  // Per-request timeout in ms. Defaults to 70s.
+  // Per-request timeout in ms. Defaults to FRONTEND_AI_TIMEOUT_MS.
   timeoutMs?: number;
 }
+
+// Frontend abort budget. Must be larger than the Vercel function
+// maxDuration (60s on Hobby, up to 300s on Pro) plus cold-start overhead,
+// so the browser doesn't kill a request the model and the function would
+// have completed. The previous 70s budget cut off requests just as the
+// model was responding, surfacing as "signal is aborted without reason".
+export const FRONTEND_AI_TIMEOUT_MS = 180_000;
 
 // Localized error thrown when the AI route is missing / misconfigured. The
 // UI distinguishes this from generic API failures to show a "请部署到 Vercel
@@ -186,10 +193,17 @@ export async function generateNoteWithAi(
   if (!fetchFn) {
     throw new Error("当前运行环境缺少 fetch 实现。");
   }
-  const timeoutMs = opts.timeoutMs ?? 70_000;
+  const timeoutMs = opts.timeoutMs ?? FRONTEND_AI_TIMEOUT_MS;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  // Track whether the abort came from OUR timeout vs. the user / page unload,
+  // so we can surface a friendly Chinese timeout message instead of the raw
+  // "signal is aborted without reason" string the platform throws.
+  let timedOut = false;
   const timer = controller
-    ? setTimeout(() => controller.abort(), timeoutMs)
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
     : null;
   let res: Response;
   try {
@@ -201,6 +215,12 @@ export async function generateNoteWithAi(
     });
   } catch (err) {
     if (timer) clearTimeout(timer);
+    if (isAbortError(err) || timedOut) {
+      const seconds = Math.round(timeoutMs / 1000);
+      throw new Error(
+        `AI 生成超时（已等待 ${seconds} 秒）。请稍后重试，或减少输入内容/取消截图模仿后再试。`,
+      );
+    }
     throw new Error(`无法连接到 AI 生成服务：${(err as Error).message}`);
   }
   if (timer) clearTimeout(timer);
@@ -230,4 +250,17 @@ async function safeReadJson(res: Response): Promise<any> {
   } catch {
     return null;
   }
+}
+
+// Recognise the various ways fetch reports an aborted request across
+// browsers and Node. In modern browsers the message is "signal is aborted
+// without reason"; in Node 20 it's "The operation was aborted"; both set
+// `name === "AbortError"` reliably.
+export function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: string; code?: string; message?: string };
+  if (e.name === "AbortError") return true;
+  if (e.code === "ABORT_ERR") return true;
+  if (typeof e.message === "string" && /aborted/i.test(e.message)) return true;
+  return false;
 }

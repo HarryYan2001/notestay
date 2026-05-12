@@ -44,6 +44,11 @@ export async function registerRoutes(
     } catch (err) {
       const msg = (err as Error).message || "Unknown error";
       console.error("[/api/generate-note] failed:", msg);
+      if (/超时|aborted|timed? out/i.test(msg)) {
+        return res.status(504).json({
+          error: `AI 模型响应超时：${msg}。请稍后重试或减少输入内容。`,
+        });
+      }
       return res.status(502).json({
         error: `调用智谱 AI 失败：${msg}`,
       });
