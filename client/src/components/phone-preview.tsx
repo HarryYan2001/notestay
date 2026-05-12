@@ -4,8 +4,7 @@ import type {
   PageDesign,
   StickerOverlay,
 } from "@/lib/types";
-import { fontFamilyFor } from "@/lib/sticker-fonts";
-import { CoverFlat } from "@/components/cover-flat";
+import { PageFlat } from "@/components/page-flat";
 import {
   Heart,
   MessageCircle,
@@ -22,6 +21,8 @@ interface Props {
   selectedPageIndex: number;
   onSelectPage: (index: number) => void;
   onStickersChange: (next: StickerOverlay[]) => void;
+  onTitleChange?: (title: string) => void;
+  onBodyChange?: (body: string) => void;
 }
 
 // Width of the inner phone preview area in px (used to scale layouts).
@@ -34,6 +35,8 @@ export function PhonePreview({
   selectedPageIndex,
   onSelectPage,
   onStickersChange,
+  onTitleChange,
+  onBodyChange,
 }: Props) {
   const pages = note.pageLayout;
   const pagerRef = useRef<HTMLDivElement>(null);
@@ -127,22 +130,31 @@ export function PhonePreview({
               style={{ scrollSnapType: "x mandatory" }}
               data-testid="phone-image-pager"
             >
-              {pages.map((p) => (
-                <div
-                  key={p.index}
-                  ref={(el) => {
-                    pageRefs.current[p.index] = el;
-                  }}
-                  className="relative shrink-0 snap-center"
-                  style={{ width: PAGE_WIDTH }}
-                  data-testid={`phone-page-${p.index}`}
-                >
-                  <CoverFlat cover={pageDesigns[p.index] || fallbackDesign(p.gradient)} width={PAGE_WIDTH} />
-                  {/* Sticker overlays for this page */}
-                  <div className="pointer-events-none absolute inset-0">
-                    {stickers
-                      .filter((s) => s.pageIndex === p.index)
-                      .map((s) => (
+              {pages.map((p) => {
+                const design =
+                  pageDesigns[p.index] || fallbackDesign(p.gradient);
+                const pageStickers = stickers.filter(
+                  (s) => s.pageIndex === p.index,
+                );
+                return (
+                  <div
+                    key={p.index}
+                    ref={(el) => {
+                      pageRefs.current[p.index] = el;
+                    }}
+                    className="relative shrink-0 snap-center"
+                    style={{ width: PAGE_WIDTH, height: Math.round((PAGE_WIDTH * 4) / 3) }}
+                    data-testid={`phone-page-${p.index}`}
+                  >
+                    {/* Composed flat layer (design + stickers in one render) */}
+                    <PageFlat
+                      design={design}
+                      stickers={pageStickers}
+                      width={PAGE_WIDTH}
+                    />
+                    {/* Sticker drag affordance overlay — invisible hit targets on top of composed flat */}
+                    <div className="absolute inset-0">
+                      {pageStickers.map((s) => (
                         <div
                           key={s.id}
                           style={{
@@ -150,25 +162,16 @@ export function PhonePreview({
                             left: `${s.x}%`,
                             top: `${s.y}%`,
                             transform: `rotate(${s.rotation}deg)`,
-                            color: s.color,
-                            background: s.background ?? "transparent",
-                            fontFamily: fontFamilyFor(s.font),
+                            fontFamily: "inherit",
                             fontSize: s.fontSize,
                             fontWeight: 700,
                             padding: "4px 10px",
                             borderRadius: 14,
-                            pointerEvents: "auto",
                             cursor: "grab",
                             touchAction: "none",
-                            boxShadow:
-                              s.background && s.background !== "transparent"
-                                ? "0 4px 14px rgba(0,0,0,0.18)"
-                                : "0 2px 6px rgba(0,0,0,0.25)",
-                            textShadow:
-                              !s.background || s.background === "transparent"
-                                ? "0 2px 6px rgba(0,0,0,0.45)"
-                                : "none",
+                            color: "transparent",
                             userSelect: "none",
+                            zIndex: 1100,
                           }}
                           data-testid={`sticker-overlay-${s.id}`}
                           onPointerDown={(e) => {
@@ -186,9 +189,10 @@ export function PhonePreview({
                           {s.text}
                         </div>
                       ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Pager arrows */}
@@ -236,21 +240,27 @@ export function PhonePreview({
             </div>
           </div>
 
-          {/* Body text — vertical, no horizontal swipe interaction. */}
+          {/* Body text — directly editable in preview. */}
           <div
             className="overflow-y-auto scroll-area-hide px-4 py-4 text-foreground"
             style={{ maxHeight: 320 }}
             data-testid="phone-body-scroll"
           >
-            <div className="text-[15px] font-bold leading-snug" data-testid="text-preview-title">
-              {note.title}
-            </div>
-            <div
-              className="mt-2 text-[12px] leading-relaxed whitespace-pre-line text-foreground/90"
-              data-testid="text-preview-body"
-            >
-              {note.body}
-            </div>
+            <InlineEditable
+              className="text-[15px] font-bold leading-snug outline-none focus:bg-primary/5 rounded-md -mx-1 px-1"
+              value={note.title}
+              onChange={(v) => onTitleChange?.(v)}
+              placeholder="编辑标题"
+              singleLine
+              testId="phone-edit-title"
+            />
+            <InlineEditable
+              className="mt-2 text-[12px] leading-relaxed whitespace-pre-line text-foreground/90 outline-none focus:bg-primary/5 rounded-md -mx-1 px-1"
+              value={note.body}
+              onChange={(v) => onBodyChange?.(v)}
+              placeholder="编辑正文"
+              testId="phone-edit-body"
+            />
             <div className="mt-3 flex flex-wrap gap-1.5">
               {note.tags.map((t) => (
                 <span key={t} className="text-[11px] text-primary">{t}</span>
@@ -273,7 +283,7 @@ export function PhonePreview({
 
       <p className="mt-3 text-center text-[11px] text-muted-foreground">
         左右滑动切换图片页 · 当前第 {Math.max(0, pages.findIndex((p) => p.index === selectedPageIndex)) + 1} /
-        {pages.length} 张
+        {pages.length} 张 · 点击标题或正文可直接编辑
       </p>
     </div>
   );
@@ -289,4 +299,60 @@ function fallbackDesign(gradient: string): PageDesign {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+// Contenteditable wrapper that commits on blur and supports multi-line text.
+function InlineEditable({
+  value,
+  onChange,
+  className,
+  placeholder,
+  singleLine,
+  testId,
+}: {
+  tag?: "div" | "span";
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+  placeholder?: string;
+  singleLine?: boolean;
+  testId?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Sync DOM with value when value changes externally (e.g. regenerate).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.innerText !== value) {
+      el.innerText = value;
+    }
+  }, [value]);
+
+  function commit() {
+    const el = ref.current;
+    if (!el) return;
+    const next = el.innerText;
+    if (next !== value) onChange(next);
+  }
+
+  return (
+    <div
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      className={className}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (singleLine && e.key === "Enter") {
+          e.preventDefault();
+          (e.currentTarget as HTMLDivElement).blur();
+        }
+      }}
+      data-testid={testId}
+      data-placeholder={placeholder}
+      role="textbox"
+      aria-label={placeholder}
+    />
+  );
 }
