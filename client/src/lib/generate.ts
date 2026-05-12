@@ -254,8 +254,11 @@ export function generateNote(input: AppInputState): GeneratedNote {
   if (roomType) ctxParts.push(`房型「${roomType}」`);
   const contextLine = ctxParts.length ? `📍 ${ctxParts.join(" · ")}` : null;
 
-  // Price as its own standalone line wrapped in 【】, only if user supplied it.
-  const priceLine = price ? `【价格: ${price}】` : null;
+  // Price renders as its own emoji-headed section inside the body, only when
+  // the user actually supplied a price. We never invent a price.
+  const priceSection: Section | null = price
+    ? { emoji: "💰", label: "价格", text: `本次入住价格${price}，供大家参考。` }
+    : null;
 
   // Closing collectible one-sentence summary — must avoid prohibited phrases.
   const closingBank = [
@@ -272,8 +275,8 @@ export function generateNote(input: AppInputState): GeneratedNote {
     const lines: string[] = [];
     lines.push(opening);
     if (contextLine) lines.push(contextLine);
-    if (priceLine) lines.push(priceLine);
-    for (const s of usedSections) {
+    const all = priceSection ? [priceSection, ...usedSections] : usedSections;
+    for (const s of all) {
       lines.push("");
       lines.push(`${s.emoji} ${s.label}`);
       lines.push(s.text);
