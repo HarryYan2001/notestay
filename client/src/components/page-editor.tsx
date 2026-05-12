@@ -45,13 +45,31 @@ interface Props {
 
 type DragState =
   | { kind: "move"; layerId: string; startX: number; startY: number; origX: number; origY: number }
-  | { kind: "resize"; layerId: string; startX: number; startY: number; origW: number; origH: number; origRot: number; centerX: number; centerY: number; startAngle: number }
-  | { kind: "rotate"; layerId: string; centerX: number; centerY: number; startAngle: number; origRot: number }
+  | {
+      kind: "transform";
+      layerId: string;
+      centerX: number;
+      centerY: number;
+      startAngle: number;
+      startDist: number;
+      origW: number;
+      origH: number;
+      origRot: number;
+    }
   | { kind: "imgpan"; layerId: string; startX: number; startY: number; origOX: number; origOY: number };
 
 type StickerDrag =
   | { kind: "move"; id: string; startX: number; startY: number; origX: number; origY: number }
-  | { kind: "rotate"; id: string; centerX: number; centerY: number; startAngle: number; origRot: number };
+  | {
+      kind: "transform";
+      id: string;
+      centerX: number;
+      centerY: number;
+      startAngle: number;
+      startDist: number;
+      origFontSize: number;
+      origRot: number;
+    };
 
 export function PageEditor({
   page,
@@ -139,17 +157,19 @@ export function PageEditor({
           x: clamp(drag.origX + dxPct, -10, 105),
           y: clamp(drag.origY + dyPct, -10, 105),
         });
-      } else if (drag.kind === "resize") {
-        const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
-        const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
-        updateLayer(drag.layerId, {
-          w: clamp(drag.origW + dxPct, 8, 110),
-          h: clamp(drag.origH + dyPct, 4, 110),
-        });
-      } else if (drag.kind === "rotate") {
+      } else if (drag.kind === "transform") {
         const ang = Math.atan2(ev.clientY - drag.centerY, ev.clientX - drag.centerX);
         const deg = (ang - drag.startAngle) * (180 / Math.PI);
-        updateLayer(drag.layerId, { rotation: Math.round(drag.origRot + deg) });
+        const dist = Math.hypot(
+          ev.clientX - drag.centerX,
+          ev.clientY - drag.centerY,
+        );
+        const scale = drag.startDist > 0 ? dist / drag.startDist : 1;
+        updateLayer(drag.layerId, {
+          rotation: Math.round(drag.origRot + deg),
+          w: clamp(drag.origW * scale, 8, 110),
+          h: clamp(drag.origH * scale, 4, 110),
+        });
       } else if (drag.kind === "imgpan") {
         const dxPct = ((ev.clientX - drag.startX) / rect.width) * 100;
         const dyPct = ((ev.clientY - drag.startY) / rect.height) * 100;
@@ -200,10 +220,23 @@ export function PageEditor({
           ev.clientX - stickerDrag.centerX,
         );
         const deg = (ang - stickerDrag.startAngle) * (180 / Math.PI);
+        const dist = Math.hypot(
+          ev.clientX - stickerDrag.centerX,
+          ev.clientY - stickerDrag.centerY,
+        );
+        const scale = stickerDrag.startDist > 0 ? dist / stickerDrag.startDist : 1;
         onChangeStickers(
           stickers.map((s) =>
             s.id === stickerDrag.id
-              ? { ...s, rotation: Math.round(stickerDrag.origRot + deg) }
+              ? {
+                  ...s,
+                  rotation: Math.round(stickerDrag.origRot + deg),
+                  fontSize: clamp(
+                    Math.round(stickerDrag.origFontSize * scale),
+                    8,
+                    72,
+                  ),
+                }
               : s,
           ),
         );
@@ -233,32 +266,21 @@ export function PageEditor({
       origY: l.y,
     });
   }
-  function startResize(e: React.PointerEvent, l: CoverLayer, _target: HTMLElement) {
-    e.stopPropagation();
-    setDrag({
-      kind: "resize",
-      layerId: l.id,
-      startX: e.clientX,
-      startY: e.clientY,
-      origW: l.w,
-      origH: l.h,
-      origRot: l.rotation,
-      centerX: 0,
-      centerY: 0,
-      startAngle: 0,
-    });
-  }
-  function startRotate(e: React.PointerEvent, l: CoverLayer, target: HTMLElement) {
+  function startTransform(e: React.PointerEvent, l: CoverLayer, target: HTMLElement) {
     e.stopPropagation();
     const rect = target.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
+    const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
     setDrag({
-      kind: "rotate",
+      kind: "transform",
       layerId: l.id,
       centerX: cx,
       centerY: cy,
       startAngle: Math.atan2(e.clientY - cy, e.clientX - cx),
+      startDist: dist,
+      origW: l.w,
+      origH: l.h,
       origRot: l.rotation,
     });
   }
@@ -287,17 +309,20 @@ export function PageEditor({
       origY: s.y,
     });
   }
-  function startStickerRotate(e: React.PointerEvent, s: StickerOverlay, target: HTMLElement) {
+  function startStickerTransform(e: React.PointerEvent, s: StickerOverlay, target: HTMLElement) {
     e.stopPropagation();
     const rect = target.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
+    const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
     setStickerDrag({
-      kind: "rotate",
+      kind: "transform",
       id: s.id,
       centerX: cx,
       centerY: cy,
       startAngle: Math.atan2(e.clientY - cy, e.clientX - cx),
+      startDist: dist,
+      origFontSize: s.fontSize,
       origRot: s.rotation,
     });
   }
@@ -367,15 +392,26 @@ export function PageEditor({
     onChangeDesign({ ...design, bgImageUrl: url });
   }
 
-  // Wheel zoom while in image edit mode
-  function onLayerWheel(e: React.WheelEvent, l: CoverImageLayer) {
-    if (editingImageId !== l.id) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const delta = e.deltaY > 0 ? -0.08 : 0.08;
-    const next = clampNum(l.zoom + delta, 0.5, 3);
-    updateLayer(l.id, { zoom: Number(next.toFixed(2)) });
-  }
+  // Wheel zoom while in image edit mode — uses a native non-passive listener
+  // (see effect below) so preventDefault actually blocks the page from scrolling.
+  useEffect(() => {
+    if (!editingImageId) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handler = (e: WheelEvent) => {
+      const layer = design.layers.find((l) => l.id === editingImageId);
+      if (!layer || layer.type !== "image") return;
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      const next = clamp(layer.zoom + delta, 0.5, 3);
+      updateLayer(layer.id, { zoom: Number(next.toFixed(2)) });
+    };
+    stage.addEventListener("wheel", handler, { passive: false });
+    return () => {
+      stage.removeEventListener("wheel", handler);
+    };
+  }, [editingImageId, design.layers, updateLayer]);
 
   // Stickers
   function addSticker() {
@@ -506,7 +542,6 @@ export function PageEditor({
                     setSelectedId(l.id);
                     setEditingImageId(l.id);
                   }}
-                  onWheel={(e) => onLayerWheel(e, l)}
                 >
                   <div
                     style={{
@@ -537,10 +572,11 @@ export function PageEditor({
                     <>
                       <CornerButton
                         position="tl"
-                        label="换图"
+                        label=""
                         onClick={() => replaceInputRef.current?.click()}
                         testId={`${testIdPrefix}-corner-replace-${l.id}`}
                         icon={<Repeat className="size-3" />}
+                        title="换图"
                       />
                       <CornerButton
                         position="tr"
@@ -559,17 +595,12 @@ export function PageEditor({
                         icon={<Settings className="size-3" />}
                         title="详细设置"
                       />
-                      <ResizeRotateGroup
-                        onResize={(e) => {
-                          const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
-                          startResize(e, l, target);
+                      <TransformHandle
+                        onPointerDown={(e) => {
+                          const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                          startTransform(e, l, target);
                         }}
-                        onRotate={(e) => {
-                          const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
-                          startRotate(e, l, target);
-                        }}
-                        testIdResize={`${testIdPrefix}-corner-resize-${l.id}`}
-                        testIdRotate={`${testIdPrefix}-corner-rotate-${l.id}`}
+                        testId={`${testIdPrefix}-corner-transform-${l.id}`}
                       />
                       {isImageEditing && (
                         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white whitespace-nowrap">
@@ -639,17 +670,12 @@ export function PageEditor({
                       icon={<Settings className="size-3" />}
                       title="详细设置"
                     />
-                    <ResizeRotateGroup
-                      onResize={(e) => {
-                        const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
-                        startResize(e, l, target);
+                    <TransformHandle
+                      onPointerDown={(e) => {
+                        const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                        startTransform(e, l, target);
                       }}
-                      onRotate={(e) => {
-                        const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
-                        startRotate(e, l, target);
-                      }}
-                      testIdResize={`${testIdPrefix}-corner-resize-${l.id}`}
-                      testIdRotate={`${testIdPrefix}-corner-rotate-${l.id}`}
+                      testId={`${testIdPrefix}-corner-transform-${l.id}`}
                     />
                   </>
                 )}
@@ -693,13 +719,32 @@ export function PageEditor({
           >
             {s.text}
             {s.id === selectedStickerId && (
-              <RotateHandle
-                onPointerDown={(e) => {
-                  const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
-                  startStickerRotate(e, s, target);
-                }}
-                testId={`${testIdPrefix}-sticker-rotate-${s.id}`}
-              />
+              <>
+                <CornerButton
+                  position="tr"
+                  label=""
+                  onClick={() => removeSticker(s.id)}
+                  testId={`${testIdPrefix}-sticker-corner-delete-${s.id}`}
+                  icon={<Trash2 className="size-3" />}
+                  variant="danger"
+                  title="删除贴纸"
+                />
+                <CornerButton
+                  position="bl"
+                  label=""
+                  onClick={() => setSettingsOpen((v) => !v)}
+                  testId={`${testIdPrefix}-sticker-corner-settings-${s.id}`}
+                  icon={<Settings className="size-3" />}
+                  title="详细设置"
+                />
+                <TransformHandle
+                  onPointerDown={(e) => {
+                    const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                    startStickerTransform(e, s, target);
+                  }}
+                  testId={`${testIdPrefix}-sticker-corner-transform-${s.id}`}
+                />
+              </>
             )}
           </div>
         ))}
@@ -1003,50 +1048,7 @@ function CornerButton({
   );
 }
 
-function ResizeRotateGroup({
-  onResize,
-  onRotate,
-  testIdResize,
-  testIdRotate,
-}: {
-  onResize: (e: React.PointerEvent) => void;
-  onRotate: (e: React.PointerEvent) => void;
-  testIdResize: string;
-  testIdRotate: string;
-}) {
-  return (
-    <div
-      className="absolute -right-2 -bottom-2 inline-flex items-center gap-1 rounded-full bg-white/95 shadow border border-black/10 px-1 py-0.5"
-      style={{ zIndex: 5 }}
-    >
-      <button
-        type="button"
-        className="inline-flex items-center justify-center size-4 rounded-full hover:bg-primary/10 cursor-grab"
-        onPointerDown={onRotate}
-        onClick={(e) => e.stopPropagation()}
-        data-testid={testIdRotate}
-        title="旋转"
-        aria-label="旋转"
-      >
-        <RotateCcw className="size-3 text-primary" />
-      </button>
-      <span className="block w-px h-3 bg-border" />
-      <button
-        type="button"
-        className="inline-flex items-center justify-center size-4 rounded-full hover:bg-primary/10 cursor-se-resize"
-        onPointerDown={onResize}
-        onClick={(e) => e.stopPropagation()}
-        data-testid={testIdResize}
-        title="拖动调整大小"
-        aria-label="调整大小"
-      >
-        <span className="block size-2 rounded-full border-2 border-primary" />
-      </button>
-    </div>
-  );
-}
-
-function RotateHandle({
+function TransformHandle({
   onPointerDown,
   testId,
 }: {
@@ -1054,14 +1056,21 @@ function RotateHandle({
   testId: string;
 }) {
   return (
-    <div
-      className="absolute -top-3 left-1/2 -translate-x-1/2 size-4 rounded-full bg-white shadow inline-flex items-center justify-center cursor-grab"
-      onPointerDown={onPointerDown}
+    <button
+      type="button"
+      className="absolute -right-2.5 -bottom-2.5 inline-flex items-center justify-center size-6 rounded-full bg-white shadow border border-black/10 hover:bg-primary/10 cursor-nwse-resize"
+      style={{ zIndex: 5 }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onPointerDown(e);
+      }}
+      onClick={(e) => e.stopPropagation()}
       data-testid={testId}
-      title="旋转"
+      title="拖动可同时缩放与旋转"
+      aria-label="缩放与旋转"
     >
-      <span className="block size-2 rounded-full border-2 border-primary" />
-    </div>
+      <RotateCcw className="size-3 text-primary" />
+    </button>
   );
 }
 
@@ -1318,7 +1327,6 @@ function TextLayerPanel({
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
-const clampNum = clamp;
 
 function parseColor(c: string | null): string {
   if (!c) return "#000000";
