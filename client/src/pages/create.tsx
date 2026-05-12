@@ -2,10 +2,14 @@ import { useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useLocation } from "wouter";
 import { AppShell } from "@/components/app-shell";
-import { useApp } from "@/lib/app-state";
+import {
+  hasFrameworkContent,
+  hasFreeformContent,
+  useApp,
+} from "@/lib/app-state";
 import { STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
-import type { UploadedImage } from "@/lib/types";
+import type { InputMode, UploadedImage } from "@/lib/types";
 import {
   Plus,
   Trash2,
@@ -26,6 +30,25 @@ export default function CreatePage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [generating, setGenerating] = useState(false);
   const [agentStep, setAgentStep] = useState(0);
+
+  // Switch text-input mode. If the OTHER mode already has content, confirm
+  // before clearing — A and B are mutually exclusive, so the previous mode's
+  // content cannot ride along into the next generation.
+  function requestSwitchMode(next: InputMode) {
+    if (next === app.state.inputMode) return;
+    const otherHasContent =
+      next === "framework"
+        ? hasFreeformContent(app.state)
+        : hasFrameworkContent(app.state);
+    if (otherHasContent) {
+      const otherName = next === "framework" ? "B · 自由心得" : "A · 框架化输入";
+      const ok = window.confirm(
+        `切换后将清空${otherName}中已填写的内容,无法恢复。是否继续?`,
+      );
+      if (!ok) return;
+    }
+    app.switchInputMode(next);
+  }
 
   function addFrameworkField() {
     const id = `f${Date.now()}`;
@@ -141,26 +164,57 @@ export default function CreatePage() {
         <div className="mt-8 grid lg:grid-cols-3 gap-6">
           {/* LEFT: text & hotel */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Text input switch */}
-            <Section title="文案输入" subtitle="选择你习惯的写法,任选其一即可" testId="section-text">
-              <div className="flex gap-2 mb-4" role="tablist">
-                {(["framework", "freeform"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="tab"
-                    data-testid={`tab-mode-${mode}`}
-                    onClick={() => app.setInputMode(mode)}
-                    className={`px-4 py-1.5 rounded-full text-sm transition ${
-                      app.state.inputMode === mode
-                        ? "bg-foreground text-background"
-                        : "bg-card border border-card-border hover-elevate"
-                    }`}
-                  >
-                    {mode === "framework" ? "A · 框架化输入" : "B · 自由心得"}
-                  </button>
-                ))}
+            {/* Text input switch — A and B are mutually exclusive. */}
+            <Section
+              title="文案输入"
+              subtitle="A · 框架化输入 与 B · 自由心得 二选一,切换后另一种的内容会被清空"
+              testId="section-text"
+            >
+              <div
+                className="flex gap-2 mb-3"
+                role="radiogroup"
+                aria-label="文案输入模式"
+                data-testid="group-input-mode"
+              >
+                {(["framework", "freeform"] as const).map((mode) => {
+                  const active = app.state.inputMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      data-testid={`tab-mode-${mode}`}
+                      onClick={() => requestSwitchMode(mode)}
+                      className={`px-4 py-1.5 rounded-full text-sm transition ${
+                        active
+                          ? "bg-foreground text-background"
+                          : "bg-card border border-card-border hover-elevate"
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          aria-hidden
+                          className={`inline-block size-2.5 rounded-full border ${
+                            active
+                              ? "bg-background border-background"
+                              : "border-muted-foreground"
+                          }`}
+                        />
+                        {mode === "framework" ? "A · 框架化输入" : "B · 自由心得"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
+              <p
+                className="mb-4 text-[11px] text-muted-foreground"
+                data-testid="hint-mode-exclusive"
+              >
+                {app.state.inputMode === "framework"
+                  ? "当前为 A 框架化输入。生成时将仅使用下方维度内容,B 自由心得文本会被忽略。"
+                  : "当前为 B 自由心得。生成时将仅使用下方自由文本,A 维度内容会被忽略。"}
+              </p>
 
               {app.state.inputMode === "framework" ? (
                 <div className="space-y-3">

@@ -250,6 +250,7 @@ export default function ResultPage() {
           <div className="lg:col-span-5">
             <div className="lg:sticky lg:top-24 space-y-4" data-testid="sticky-preview-pane">
               <PhonePreview
+                key={note.id}
                 note={note}
                 pageDesigns={note.pageDesigns}
                 stickers={note.stickers}

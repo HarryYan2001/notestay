@@ -136,6 +136,9 @@ export interface StickerOverlay {
 }
 
 export interface GeneratedNote {
+  // Identity for this generation pass. Bumped on every regenerate so result
+  // page components can fully remount and discard any stale DOM state.
+  id: string;
   styleKey: StyleKey;
   title: string;
   // The title produced by the initial generation pass. Preserved verbatim so

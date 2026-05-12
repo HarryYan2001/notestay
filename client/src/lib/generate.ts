@@ -114,10 +114,16 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const roomType = nonEmpty(input.hotel.roomType);
   const stayDate = nonEmpty(input.hotel.stayDate);
 
-  const frameworkBlocks = input.framework
-    .filter((f) => nonEmpty(f.value))
-    .map((f) => ({ label: f.label.trim() || "笔记", value: f.value.trim() }));
-  const freeText = nonEmpty(input.freeText);
+  // Strict mode exclusion: framework slots are read ONLY in framework mode,
+  // freeText is read ONLY in freeform mode. The inactive mode's content
+  // never leaks into generation, even if it lingers in app state.
+  const frameworkBlocks =
+    input.inputMode === "framework"
+      ? input.framework
+          .filter((f) => nonEmpty(f.value))
+          .map((f) => ({ label: f.label.trim() || "笔记", value: f.value.trim() }))
+      : [];
+  const freeText = input.inputMode === "freeform" ? nonEmpty(input.freeText) : null;
 
   const userContent =
     input.inputMode === "framework"
@@ -135,7 +141,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   if (nonEmpty(input.viralRef))
     warnings.push("已分析所附爆款笔记链接的结构、节奏与标题逻辑作为参考,不会复制其原文或图片内容。");
 
-  const seedString = `${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${Date.now()}|${Math.random()}`;
+  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
 
   // 2) Title
@@ -754,6 +760,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   }
 
   return {
+    id: `gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     styleKey: input.style,
     title,
     originalTitle: title,

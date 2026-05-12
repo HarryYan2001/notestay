@@ -42,6 +42,10 @@ interface AppCtx {
   state: AppInputState;
   setState: React.Dispatch<React.SetStateAction<AppInputState>>;
   setInputMode: (m: InputMode) => void;
+  // Switch mode and clear data from the OTHER mode. The two text-input modes
+  // are mutually exclusive — when the user switches, the previous mode's
+  // content must not leak forward into the new mode's generation.
+  switchInputMode: (m: InputMode) => void;
   setFramework: (f: FrameworkField[]) => void;
   setFreeText: (t: string) => void;
   setHotel: (h: HotelInfo) => void;
@@ -55,6 +59,15 @@ interface AppCtx {
   reset: () => void;
 }
 
+// Predicates exported so create.tsx can detect when switching modes would
+// discard user content (so we can prompt the user before clearing).
+export function hasFrameworkContent(s: AppInputState): boolean {
+  return s.framework.some((f) => f.value.trim().length > 0);
+}
+export function hasFreeformContent(s: AppInputState): boolean {
+  return s.freeText.trim().length > 0;
+}
+
 const Ctx = createContext<AppCtx | null>(null);
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
@@ -66,6 +79,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       state,
       setState,
       setInputMode: (m) => setState((s) => ({ ...s, inputMode: m })),
+      switchInputMode: (m) =>
+        setState((s) => {
+          if (s.inputMode === m) return s;
+          // Drop the other mode's data so it cannot leak into the next
+          // generation. Framework keeps its labels (default scaffolding)
+          // but all values reset to empty.
+          if (m === "framework") {
+            return {
+              ...s,
+              inputMode: m,
+              freeText: "",
+            };
+          }
+          return {
+            ...s,
+            inputMode: m,
+            framework: s.framework.map((f) => ({ ...f, value: "" })),
+          };
+        }),
       setFramework: (f) => setState((s) => ({ ...s, framework: f })),
       setFreeText: (t) => setState((s) => ({ ...s, freeText: t })),
       setHotel: (h) => setState((s) => ({ ...s, hotel: h })),
