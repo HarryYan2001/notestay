@@ -139,6 +139,31 @@ async function main() {
     status: r4.statusCode,
     error: r4.body && typeof r4.body.error === "string" ? r4.body.error.slice(0, 80) : null,
   }));
+
+  // ----------------------------------------------------------------------
+  // Case 5: CORS preflight from the GitHub Pages static frontend. Must
+  // return 204 with Access-Control-Allow-Origin echoed for the allowed
+  // origin. This is what makes the harryyan2001.github.io build able to
+  // POST to /api/generate-note cross-origin.
+  // ----------------------------------------------------------------------
+  delete process.env.ZHIPU_API_KEY;
+  const r5 = mockRes();
+  await handler(
+    mockReq({
+      method: "OPTIONS",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://harryyan2001.github.io",
+      },
+    }),
+    r5,
+  );
+  console.log("CASE5:" + JSON.stringify({
+    status: r5.statusCode,
+    allowOrigin: r5.headers["access-control-allow-origin"] || null,
+    allowMethods: r5.headers["access-control-allow-methods"] || null,
+    vary: r5.headers["vary"] || null,
+  }));
 }
 
 main().catch((err) => {
@@ -233,6 +258,7 @@ try {
   const case2 = find("CASE2:");
   const case3 = find("CASE3:");
   const case4 = find("CASE4:");
+  const case5 = find("CASE5:");
 
   // -- Case 1: missing key returns structured 503 JSON --
   if (case1.status !== 503) {
@@ -299,10 +325,38 @@ try {
     process.exit(1);
   }
 
+  // -- Case 5: CORS preflight from GitHub Pages origin --
+  if (case5.status !== 204) {
+    console.error("FAIL: case5 expected 204 on CORS preflight, got", case5.status);
+    process.exit(1);
+  }
+  if (case5.allowOrigin !== "https://harryyan2001.github.io") {
+    console.error(
+      "FAIL: case5 must echo GitHub Pages origin, got",
+      case5.allowOrigin,
+    );
+    process.exit(1);
+  }
+  if (!case5.allowMethods || !/POST/.test(case5.allowMethods)) {
+    console.error(
+      "FAIL: case5 must advertise POST in Allow-Methods, got",
+      case5.allowMethods,
+    );
+    process.exit(1);
+  }
+  if (!case5.vary || !/origin/i.test(case5.vary)) {
+    console.error(
+      "FAIL: case5 must set Vary: Origin so caches don't mix responses",
+      case5.vary,
+    );
+    process.exit(1);
+  }
+
   console.log(
     "Vercel bundling smoke OK (fresh process: missing-key → 503 JSON; " +
     "configured-key + mocked Zhipu → 200 structured response; " +
-    "upstream 5xx → 502 JSON; abort/timeout → 504 JSON)",
+    "upstream 5xx → 502 JSON; abort/timeout → 504 JSON; " +
+    "CORS preflight from GitHub Pages → 204 with echoed Allow-Origin)",
   );
 } finally {
   try {

@@ -20,6 +20,9 @@
 import handler, {
   parseBody,
   validatePayload,
+  buildAllowedOrigins,
+  resolveAllowedOrigin,
+  DEFAULT_ALLOWED_ORIGINS,
   type VercelLikeRequest,
   type VercelLikeResponse,
 } from "../api/generate-note";
@@ -166,14 +169,99 @@ async function run() {
   }
 
   // ------------------------------------------------------------------
-  // Branch: OPTIONS preflight → 204.
+  // Branch: OPTIONS preflight → 204 with CORS headers echoed for an
+  // allowed origin (GitHub Pages static frontend).
   // ------------------------------------------------------------------
-  console.log("--- handler: OPTIONS returns 204 ---");
+  console.log("--- handler: OPTIONS returns 204 with CORS headers ---");
   {
     const res = mockRes();
-    await handler(mockReq({ method: "OPTIONS" }), res);
+    await handler(
+      mockReq({
+        method: "OPTIONS",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://harryyan2001.github.io",
+        },
+      }),
+      res,
+    );
     assert(res.statusCode === 204, `expected 204, got ${res.statusCode}`);
+    assert(
+      res.headers["access-control-allow-origin"] === "https://harryyan2001.github.io",
+      `OPTIONS must echo GitHub Pages origin, got ${res.headers["access-control-allow-origin"]}`,
+    );
+    assert(
+      (res.headers["access-control-allow-methods"] || "").includes("POST"),
+      "OPTIONS must advertise POST in Allow-Methods",
+    );
+    assert(
+      (res.headers["access-control-allow-headers"] || "")
+        .toLowerCase()
+        .includes("content-type"),
+      "OPTIONS must allow Content-Type header",
+    );
+    assert(
+      (res.headers["vary"] || "").toLowerCase().includes("origin"),
+      "OPTIONS must set Vary: Origin so caches don't mix responses across origins",
+    );
   }
+
+  // ------------------------------------------------------------------
+  // Branch: OPTIONS preflight from a DISALLOWED origin → still 204 but
+  // no Allow-Origin header echoed. Same-origin Vercel + Browser fallback
+  // path must keep working.
+  // ------------------------------------------------------------------
+  console.log("--- handler: OPTIONS from disallowed origin does NOT echo Allow-Origin ---");
+  {
+    const res = mockRes();
+    await handler(
+      mockReq({
+        method: "OPTIONS",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://evil.example.com",
+        },
+      }),
+      res,
+    );
+    assert(res.statusCode === 204, `expected 204, got ${res.statusCode}`);
+    assert(
+      !res.headers["access-control-allow-origin"],
+      `disallowed origin must not be echoed, got ${res.headers["access-control-allow-origin"]}`,
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // Pure helper coverage: allowlist + origin resolution.
+  // ------------------------------------------------------------------
+  console.log("--- CORS allowlist helpers ---");
+  assert(
+    DEFAULT_ALLOWED_ORIGINS.includes("https://harryyan2001.github.io"),
+    "GitHub Pages origin must be in DEFAULT_ALLOWED_ORIGINS",
+  );
+  assert(
+    DEFAULT_ALLOWED_ORIGINS.includes("https://notestay.vercel.app"),
+    "Vercel origin must be in DEFAULT_ALLOWED_ORIGINS for explicit cross-origin",
+  );
+  assert(
+    buildAllowedOrigins({ extra: "https://staging.example.com" }).includes(
+      "https://staging.example.com",
+    ),
+    "env-provided extra origins must be merged in",
+  );
+  assert(
+    resolveAllowedOrigin("https://harryyan2001.github.io", DEFAULT_ALLOWED_ORIGINS) ===
+      "https://harryyan2001.github.io",
+    "GitHub Pages origin must resolve",
+  );
+  assert(
+    resolveAllowedOrigin("https://evil.example.com", DEFAULT_ALLOWED_ORIGINS) === null,
+    "unknown origin must NOT resolve",
+  );
+  assert(
+    resolveAllowedOrigin(undefined, DEFAULT_ALLOWED_ORIGINS) === null,
+    "missing origin must resolve to null (same-origin path)",
+  );
 
   // ------------------------------------------------------------------
   // Branch: empty body with key set → 400.

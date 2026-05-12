@@ -30,6 +30,68 @@ import type {
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
+// Where the AI backend lives when the frontend is served from a host that
+// does NOT have its own /api/generate-note (i.e. GitHub Pages). The Vercel
+// deployment of the same app hosts the real serverless function.
+//
+// Resolution order:
+//   1. Build-time override `import.meta.env.VITE_AI_API_BASE_URL`. Set this
+//      when you fork the project to a different Vercel URL.
+//   2. If the page is served from `*.github.io`, use the canonical Vercel URL.
+//   3. Otherwise (Vercel, local dev), use a same-origin relative path. This
+//      keeps the existing same-origin behaviour intact, so cookies, CSP,
+//      and proxy setups all keep working on Vercel.
+//
+// Exported so smoke tests and tooling can exercise the resolver.
+export const DEFAULT_VERCEL_AI_API_URL =
+  "https://notestay.vercel.app/api/generate-note";
+
+export interface ResolveAiApiUrlEnv {
+  hostname?: string;
+  buildOverride?: string;
+}
+
+export function resolveAiApiUrl(env: ResolveAiApiUrlEnv = {}): string {
+  const override = (env.buildOverride || "").trim();
+  if (override) {
+    // Allow either a full URL or just a base; append /api/generate-note if
+    // the override does not already point at the route.
+    if (/\/api\/generate-note\/?$/.test(override)) return override;
+    return override.replace(/\/+$/, "") + "/api/generate-note";
+  }
+  const host = (env.hostname || "").toLowerCase();
+  if (host.endsWith(".github.io") || host === "github.io") {
+    return DEFAULT_VERCEL_AI_API_URL;
+  }
+  return `${API_BASE}/api/generate-note`;
+}
+
+function currentHostname(): string {
+  try {
+    return typeof globalThis !== "undefined" &&
+      (globalThis as any).location &&
+      typeof (globalThis as any).location.hostname === "string"
+      ? ((globalThis as any).location.hostname as string)
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function buildOverride(): string {
+  try {
+    // import.meta.env is a Vite-injected object. In smoke-test / Node
+    // contexts it may be undefined — guard everything.
+    const meta: any = (import.meta as any) || {};
+    const env = meta.env || {};
+    return typeof env.VITE_AI_API_BASE_URL === "string"
+      ? env.VITE_AI_API_BASE_URL
+      : "";
+  } catch {
+    return "";
+  }
+}
+
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
 
 // Public for tests / debugging — builds the JSON payload the server expects.
@@ -188,7 +250,12 @@ export async function generateNoteWithAi(
 ): Promise<GeneratedNote> {
   const scaffold = generateNote(input);
   const payload = buildAiRequest(input);
-  const endpoint = opts.endpoint || `${API_BASE}/api/generate-note`;
+  const endpoint =
+    opts.endpoint ||
+    resolveAiApiUrl({
+      hostname: currentHostname(),
+      buildOverride: buildOverride(),
+    });
   const fetchFn = opts.fetchImpl || (globalThis.fetch as typeof fetch);
   if (!fetchFn) {
     throw new Error("当前运行环境缺少 fetch 实现。");
