@@ -37,6 +37,7 @@ export function PhonePreview({
 }: Props) {
   const pages = note.pageLayout;
   const pagerRef = useRef<HTMLDivElement>(null);
+  const suppressScrollSyncUntilRef = useRef(0);
   const [drag, setDrag] = useState<
     | null
     | { id: string; startX: number; startY: number; origX: number; origY: number }
@@ -49,6 +50,7 @@ export function PhonePreview({
     if (idx < 0) return;
     const pager = pagerRef.current;
     if (!pager) return;
+    suppressScrollSyncUntilRef.current = Date.now() + 500;
     pager.scrollTo({ left: idx * PAGE_WIDTH, behavior: "smooth" });
   }, [selectedPageIndex, pages]);
 
@@ -56,6 +58,7 @@ export function PhonePreview({
   function onScrollPager() {
     const pager = pagerRef.current;
     if (!pager) return;
+    if (Date.now() < suppressScrollSyncUntilRef.current) return;
     const idx = Math.round(pager.scrollLeft / PAGE_WIDTH);
     const target = pages[idx];
     if (target && target.index !== selectedPageIndex) {
@@ -120,7 +123,7 @@ export function PhonePreview({
             <div
               ref={pagerRef}
               onScroll={onScrollPager}
-              className="flex overflow-x-auto snap-x snap-mandatory scroll-area-hide"
+              className="relative z-0 flex overflow-x-auto snap-x snap-mandatory scroll-area-hide"
               style={{ scrollSnapType: "x mandatory" }}
               data-testid="phone-image-pager"
             >
@@ -194,7 +197,7 @@ export function PhonePreview({
                 <button
                   type="button"
                   onClick={goPrev}
-                  className="absolute left-1 top-1/2 -translate-y-1/2 size-7 rounded-full bg-black/40 text-white inline-flex items-center justify-center backdrop-blur-sm"
+                  className="absolute left-1 top-1/2 z-20 -translate-y-1/2 size-7 rounded-full bg-black/40 text-white inline-flex items-center justify-center backdrop-blur-sm"
                   data-testid="phone-page-prev"
                   aria-label="上一张"
                 >
@@ -203,7 +206,7 @@ export function PhonePreview({
                 <button
                   type="button"
                   onClick={goNext}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 size-7 rounded-full bg-black/40 text-white inline-flex items-center justify-center backdrop-blur-sm"
+                  className="absolute right-1 top-1/2 z-20 -translate-y-1/2 size-7 rounded-full bg-black/40 text-white inline-flex items-center justify-center backdrop-blur-sm"
                   data-testid="phone-page-next"
                   aria-label="下一张"
                 >
@@ -212,12 +215,15 @@ export function PhonePreview({
               </>
             )}
             {/* Page dots */}
-            <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+            <div className="absolute bottom-2 left-0 right-0 z-20 flex justify-center gap-1.5 pointer-events-auto">
               {pages.map((p, i) => (
                 <button
                   key={p.index}
                   type="button"
-                  onClick={() => onSelectPage(p.index)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectPage(p.index);
+                  }}
                   className={`h-1.5 rounded-full transition-all ${
                     p.index === selectedPageIndex
                       ? "w-4 bg-white"
