@@ -90,6 +90,29 @@ export interface ScreenshotRef {
   mood: string;
   cues: string[];
   status: string;
+  // Text style learned from OCR-extracted text inside the screenshot. Null
+  // when OCR was skipped, failed, or produced too-little text to analyze.
+  textStyle: ScreenshotTextStyleRef | null;
+}
+
+// Subset of screenshot-text-style.ts's ScreenshotTextStyleProfile that we
+// persist into app state. Kept structural so the result page and generator
+// can re-hydrate it without touching the raw OCR engine again.
+export interface ScreenshotTextStyleRef {
+  hasText: boolean;
+  charCount: number;
+  cjkCount: number;
+  tone: string;
+  cues: string[];
+  detectedEmoji: string[];
+  punctIntensity: number;
+  avgSentenceLen: number;
+  hashtagCount: number;
+  status: string;
+  // A short, sanitized preview of the recognized text (NOT used by the
+  // generator — purely for the optional "show me what was OCR'd" panel).
+  // Capped at ~240 chars so we never persist the whole reference note.
+  previewText: string;
 }
 
 export type CoverLayerType = "image" | "text";
@@ -207,6 +230,19 @@ export interface ScreenshotStyleSummary {
   cueLabels: string[];
   palette: [string, string, string];
   accent: string;
+  status: string;
+  // Textual style learned from the OCR'd screenshot text. Only populated when
+  // OCR returned a usable Chinese payload. Always object-shaped for callers
+  // (hasText=false when no text was learned).
+  text: ScreenshotTextStyleSummary;
+}
+
+export interface ScreenshotTextStyleSummary {
+  hasText: boolean;
+  tone: string;
+  toneLabel: string;
+  cues: string[];
+  cueLabels: string[];
   status: string;
 }
 

@@ -187,6 +187,9 @@ function profileToRef(p: ScreenshotStyleProfile): ScreenshotRef {
     mood: p.mood,
     cues: p.cues,
     status: p.status,
+    // No OCR pass in the visual-style smoke — textual learning is exercised
+    // by smoke-screenshot-text-style.ts. Visual-only refs explicitly opt out.
+    textStyle: null,
   };
 }
 
