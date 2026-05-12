@@ -141,6 +141,44 @@ async function main() {
   }));
 
   // ----------------------------------------------------------------------
+  // Case 4b: upstream returns the tool_calls shape (model emits its JSON
+  // via a function call instead of message.content). Pre-PR #34 this hit
+  // a 502 "Zhipu API 返回中没有可用的 message.content" — the exact GitHub
+  // Pages bug we're fixing. Must now return 200 with the parsed content.
+  // ----------------------------------------------------------------------
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({
+      choices: [{
+        finish_reason: "tool_calls",
+        message: {
+          content: null,
+          tool_calls: [{
+            function: {
+              name: "respond",
+              arguments: JSON.stringify({
+                title: "tool-call 标题",
+                altTitles: ["备 1"],
+                body: "📍 位置\\n市中心。",
+                hashtags: ["#上海酒店"],
+                commentGuide: ["问 1"],
+                warnings: []
+              })
+            }
+          }]
+        }
+      }]
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } }
+  );
+  const r4b = mockRes();
+  await handler(mockReq({ body: validPayload }), r4b);
+  console.log("CASE4B:" + JSON.stringify({
+    status: r4b.statusCode,
+    title: r4b.body && r4b.body.title,
+    errorMsg: r4b.body && typeof r4b.body.error === "string" ? r4b.body.error : null,
+  }));
+
+  // ----------------------------------------------------------------------
   // Case 5: CORS preflight from the GitHub Pages static frontend. Must
   // return 204 with Access-Control-Allow-Origin echoed for the allowed
   // origin. This is what makes the harryyan2001.github.io build able to
@@ -258,6 +296,7 @@ try {
   const case2 = find("CASE2:");
   const case3 = find("CASE3:");
   const case4 = find("CASE4:");
+  const case4b = find("CASE4B:");
   const case5 = find("CASE5:");
 
   // -- Case 1: missing key returns structured 503 JSON --
@@ -322,6 +361,21 @@ try {
   }
   if (!case4.error || !/AI 模型响应超时/.test(case4.error)) {
     console.error("FAIL: case4 missing 'AI 模型响应超时'", case4);
+    process.exit(1);
+  }
+
+  // -- Case 4b: tool_calls upstream shape returns 200 (PR #34 regression) --
+  if (case4b.status !== 200) {
+    console.error(
+      "FAIL: case4b expected 200 on tool_calls shape, got",
+      case4b.status,
+      "errorMsg:",
+      case4b.errorMsg,
+    );
+    process.exit(1);
+  }
+  if (case4b.title !== "tool-call 标题") {
+    console.error("FAIL: case4b title did not roundtrip from tool_call args", case4b);
     process.exit(1);
   }
 

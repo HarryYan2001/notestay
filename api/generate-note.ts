@@ -307,8 +307,73 @@ export interface ZhipuCallOptions {
 }
 
 interface ZhipuRawResponse {
-  choices?: { message?: { content?: string } }[];
+  choices?: any[];
   error?: { message?: string } | string;
+}
+
+// Zhipu / BigModel (GLM-4.x) is OpenAI-compatible but its returned shape
+// drifts in practice. We've observed all of these in the wild:
+//
+//   1. canonical:                choices[0].message.content = "…json…"
+//   2. structured content parts: choices[0].message.content = [{type:"text", text:"…"}, …]
+//   3. reasoning_content split:  choices[0].message.content = "" and
+//                                choices[0].message.reasoning_content = "…json…"
+//                                (a GLM-4 reasoning-tier quirk)
+//   4. tool-call style:          choices[0].message.tool_calls[0].function.arguments = "…json…"
+//                                (model interprets json_object response_format
+//                                 as a function call)
+//   5. streaming chunk in body:  choices[0].delta.content = "…"
+//   6. legacy text completion:   choices[0].text = "…"
+//
+// Before PR #34 we only accepted (1) and failed every other shape with
+// "Zhipu API 返回中没有可用的 message.content" — which is what GitHub Pages
+// users were seeing intermittently. This extractor accepts all six.
+export function extractZhipuContent(json: ZhipuRawResponse): string | null {
+  const choice = json.choices?.[0];
+  if (!choice || typeof choice !== "object") return null;
+  const msg = (choice as any).message;
+  if (msg && typeof msg === "object") {
+    // (1) canonical string content
+    if (typeof msg.content === "string" && msg.content.trim()) {
+      return msg.content;
+    }
+    // (2) structured content parts (OpenAI vision-style array)
+    if (Array.isArray(msg.content)) {
+      const parts: string[] = [];
+      for (const part of msg.content) {
+        if (typeof part === "string" && part.trim()) {
+          parts.push(part);
+        } else if (part && typeof part === "object") {
+          const p: any = part;
+          if (typeof p.text === "string" && p.text.trim()) parts.push(p.text);
+          else if (typeof p.content === "string" && p.content.trim()) parts.push(p.content);
+        }
+      }
+      const joined = parts.join("").trim();
+      if (joined) return joined;
+    }
+    // (3) reasoning_content fallback (GLM-4 reasoning tier)
+    if (typeof msg.reasoning_content === "string" && msg.reasoning_content.trim()) {
+      return msg.reasoning_content;
+    }
+    // (4) tool-call style — model returned its JSON as a function call
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        const args = tc?.function?.arguments;
+        if (typeof args === "string" && args.trim()) return args;
+      }
+    }
+  }
+  // (5) streaming chunk shape that occasionally leaks through
+  const delta = (choice as any).delta;
+  if (delta && typeof delta.content === "string" && delta.content.trim()) {
+    return delta.content;
+  }
+  // (6) legacy text-completion shape
+  if (typeof (choice as any).text === "string" && (choice as any).text.trim()) {
+    return (choice as any).text;
+  }
+  return null;
 }
 
 export async function callZhipu(
@@ -377,9 +442,26 @@ export async function callZhipu(
         ? json.error.message
         : null;
     if (errMsg) throw new Error(`Zhipu API error: ${errMsg}`);
-    const content = json.choices?.[0]?.message?.content;
-    if (!content || typeof content !== "string") {
-      throw new Error("Zhipu API 返回中没有可用的 message.content。");
+    const content = extractZhipuContent(json);
+    if (!content) {
+      // Build a SAFE diagnostic: top-level keys + first-choice key shape +
+      // finish_reason. Never includes the request, headers, or API key.
+      const choice0 = json.choices?.[0];
+      const diag = {
+        topKeys: Object.keys(json || {}),
+        choiceKeys: choice0 && typeof choice0 === "object" ? Object.keys(choice0) : [],
+        messageKeys:
+          choice0 && typeof (choice0 as any).message === "object"
+            ? Object.keys((choice0 as any).message)
+            : [],
+        finishReason:
+          (choice0 && (choice0 as any).finish_reason) ||
+          (choice0 && (choice0 as any).finishReason) ||
+          null,
+      };
+      throw new Error(
+        `Zhipu API 返回中没有可用的 message.content。诊断: ${JSON.stringify(diag).slice(0, 300)}`,
+      );
     }
     return content;
   } finally {
