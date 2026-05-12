@@ -108,7 +108,8 @@ export function PageEditor({
   const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
   const [stickerDrag, setStickerDrag] = useState<StickerDrag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [presetsOpen, setPresetsOpen] = useState(false);
+  const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
+  const [editingStickerId, setEditingStickerId] = useState<string | null>(null);
   const stageH = Math.round((width * 4) / 3);
 
   const selected = design.layers.find((l) => l.id === selectedId) || null;
@@ -122,6 +123,10 @@ export function PageEditor({
   useEffect(() => {
     if (!selected || selected.id !== editingTextId) setEditingTextId(null);
   }, [selected, editingTextId]);
+  // Exit inline sticker edit mode when the selected sticker changes.
+  useEffect(() => {
+    if (!selectedSticker || selectedSticker.id !== editingStickerId) setEditingStickerId(null);
+  }, [selectedSticker, editingStickerId]);
 
   const updateLayer = useCallback(
     (id: string, patch: Partial<CoverLayer>) => {
@@ -494,7 +499,7 @@ export function PageEditor({
     ]);
     setSelectedStickerId(id);
     setSelectedId(null);
-    setPresetsOpen(false);
+    setStickerPickerOpen(false);
   }
   function updateSticker(id: string, patch: Partial<StickerOverlay>) {
     onChangeStickers(stickers.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -552,6 +557,7 @@ export function PageEditor({
           setSelectedStickerId(null);
           setEditingImageId(null);
           setEditingTextId(null);
+          setEditingStickerId(null);
         }}
         data-testid={`${testIdPrefix}-stage`}
       >
@@ -776,70 +782,96 @@ export function PageEditor({
           })}
 
         {/* Stickers — rendered on top */}
-        {stickers.map((s) => (
-          <div
-            key={s.id}
-            style={{
-              position: "absolute",
-              left: `${s.x}%`,
-              top: `${s.y}%`,
-              transform: `rotate(${s.rotation}deg)`,
-              color: s.color,
-              background: s.background ?? "transparent",
-              fontFamily: fontFamilyFor(s.font),
-              fontSize: s.fontSize,
-              fontWeight: 700,
-              padding: "4px 10px",
-              borderRadius: 14,
-              cursor: "grab",
-              touchAction: "none",
-              boxShadow:
-                s.background && s.background !== "transparent"
-                  ? "0 4px 14px rgba(0,0,0,0.18)"
-                  : "0 2px 6px rgba(0,0,0,0.25)",
-              textShadow:
-                !s.background || s.background === "transparent"
-                  ? "0 2px 6px rgba(0,0,0,0.45)"
+        {stickers.map((s) => {
+          const isStickerEditing = editingStickerId === s.id;
+          const isStickerSelected = s.id === selectedStickerId;
+          return (
+            <div
+              key={s.id}
+              style={{
+                position: "absolute",
+                left: `${s.x}%`,
+                top: `${s.y}%`,
+                transform: `rotate(${s.rotation}deg)`,
+                color: s.color,
+                background: s.background ?? "transparent",
+                fontFamily: fontFamilyFor(s.font),
+                fontSize: s.fontSize,
+                fontWeight: 700,
+                padding: "4px 10px",
+                borderRadius: 14,
+                cursor: isStickerEditing ? "text" : "grab",
+                touchAction: "none",
+                boxShadow:
+                  s.background && s.background !== "transparent"
+                    ? "0 4px 14px rgba(0,0,0,0.18)"
+                    : "0 2px 6px rgba(0,0,0,0.25)",
+                textShadow:
+                  !s.background || s.background === "transparent"
+                    ? "0 2px 6px rgba(0,0,0,0.45)"
+                    : "none",
+                outline: isStickerSelected
+                  ? isStickerEditing
+                    ? "2px solid #fde68a"
+                    : "2px dashed #fff"
                   : "none",
-              outline: s.id === selectedStickerId ? "2px dashed #fff" : "none",
-              outlineOffset: 2,
-              userSelect: "none",
-              zIndex: 1000,
-            }}
-            data-testid={`${testIdPrefix}-sticker-${s.id}`}
-            onPointerDown={(e) => startStickerMove(e, s)}
-          >
-            {s.text}
-            {s.id === selectedStickerId && (
-              <>
-                <CornerButton
-                  position="tr"
-                  label=""
-                  onClick={() => removeSticker(s.id)}
-                  testId={`${testIdPrefix}-sticker-corner-delete-${s.id}`}
-                  icon={<Trash2 className="size-3" />}
-                  variant="danger"
-                  title="删除贴纸"
-                />
-                <CornerButton
-                  position="bl"
-                  label=""
-                  onClick={() => setSettingsOpen((v) => !v)}
-                  testId={`${testIdPrefix}-sticker-corner-settings-${s.id}`}
-                  icon={<Settings className="size-3" />}
-                  title="详细设置"
-                />
-                <TransformHandle
-                  onPointerDown={(e) => {
-                    const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
-                    startStickerTransform(e, s, target);
-                  }}
-                  testId={`${testIdPrefix}-sticker-corner-transform-${s.id}`}
-                />
-              </>
-            )}
-          </div>
-        ))}
+                outlineOffset: 2,
+                userSelect: isStickerEditing ? "text" : "none",
+                zIndex: 1000,
+              }}
+              data-testid={`${testIdPrefix}-sticker-${s.id}`}
+              onPointerDown={(e) => {
+                if (isStickerEditing) {
+                  e.stopPropagation();
+                  return;
+                }
+                startStickerMove(e, s);
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setSelectedStickerId(s.id);
+                setSelectedId(null);
+                setEditingStickerId(s.id);
+              }}
+            >
+              <EditableStickerContent
+                sticker={s}
+                editing={isStickerEditing}
+                onChange={(t) => updateSticker(s.id, { text: t })}
+                onExit={() => setEditingStickerId((curr) => (curr === s.id ? null : curr))}
+                testId={`${testIdPrefix}-sticker-inline-${s.id}`}
+              />
+              {isStickerSelected && (
+                <>
+                  <CornerButton
+                    position="tr"
+                    label=""
+                    onClick={() => removeSticker(s.id)}
+                    testId={`${testIdPrefix}-sticker-corner-delete-${s.id}`}
+                    icon={<Trash2 className="size-3" />}
+                    variant="danger"
+                    title="删除贴纸"
+                  />
+                  <CornerButton
+                    position="bl"
+                    label=""
+                    onClick={() => setSettingsOpen((v) => !v)}
+                    testId={`${testIdPrefix}-sticker-corner-settings-${s.id}`}
+                    icon={<Settings className="size-3" />}
+                    title="详细设置"
+                  />
+                  <TransformHandle
+                    onPointerDown={(e) => {
+                      const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                      startStickerTransform(e, s, target);
+                    }}
+                    testId={`${testIdPrefix}-sticker-corner-transform-${s.id}`}
+                  />
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Hidden file inputs */}
@@ -880,24 +912,16 @@ export function PageEditor({
         </button>
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
-          onClick={() => addSticker()}
-          data-testid={`${testIdPrefix}-add-sticker`}
-        >
-          <Sticker className="size-3.5" /> 添加贴纸
-        </button>
-        <button
-          type="button"
           className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 ${
-            presetsOpen
+            stickerPickerOpen
               ? "border-primary bg-primary/10 text-primary"
               : "border-border bg-card hover-elevate"
           }`}
-          onClick={() => setPresetsOpen((v) => !v)}
-          data-testid={`${testIdPrefix}-toggle-sticker-presets`}
-          aria-expanded={presetsOpen}
+          onClick={() => setStickerPickerOpen((v) => !v)}
+          data-testid={`${testIdPrefix}-add-sticker`}
+          aria-expanded={stickerPickerOpen}
         >
-          <Sticker className="size-3.5" /> 贴纸模板
+          <Sticker className="size-3.5" /> 添加贴纸
         </button>
         <label
           className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate cursor-pointer"
@@ -943,25 +967,34 @@ export function PageEditor({
         )}
       </div>
 
-      {presetsOpen && (
+      {stickerPickerOpen && (
         <div
           className="rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-2"
           data-testid={`${testIdPrefix}-sticker-presets`}
         >
           <div className="flex items-center justify-between">
             <div className="font-semibold inline-flex items-center gap-1">
-              <Sticker className="size-3.5" /> 贴纸模板 · 小红书风
+              <Sticker className="size-3.5" /> 添加贴纸 · 空白 / 小红书模板
             </div>
             <button
               type="button"
-              onClick={() => setPresetsOpen(false)}
+              onClick={() => setStickerPickerOpen(false)}
               className="rounded-full border border-border px-2 py-0.5 hover-elevate inline-flex items-center gap-1"
               data-testid={`${testIdPrefix}-sticker-presets-close`}
             >
               <X className="size-3" /> 收起
             </button>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              type="button"
+              onClick={() => addSticker()}
+              className="rounded-full border border-dashed border-border bg-background px-3 py-1 hover-elevate inline-flex items-center gap-1 text-foreground"
+              data-testid={`${testIdPrefix}-sticker-preset-blank`}
+              title="添加一个空白贴纸,双击可编辑文字"
+            >
+              <Sticker className="size-3" /> 空白贴纸
+            </button>
             {STICKER_PRESETS.map((p) => (
               <button
                 key={p.key}
@@ -983,7 +1016,7 @@ export function PageEditor({
             ))}
           </div>
           <p className="text-[10px] text-muted-foreground">
-            选中模板后即可像普通贴纸一样修改文字、字体、颜色与位置。
+            空白贴纸方便自定义文字;选中后双击贴纸即可在画布上原地编辑,与文字模块一致。
           </p>
         </div>
       )}
@@ -1136,7 +1169,7 @@ export function PageEditor({
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-card/30 p-3 text-xs text-muted-foreground">
-          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入裁切模式(滚轮缩放)。
+          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入裁切模式(滚轮缩放),双击文字 / 贴纸进入原地编辑。
         </div>
       )}
     </div>
@@ -1356,6 +1389,67 @@ function EditableTextContent({
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           (e.currentTarget as HTMLDivElement).blur();
+        }
+      }}
+      data-testid={testId}
+    />
+  );
+}
+
+function EditableStickerContent({
+  sticker,
+  editing,
+  onChange,
+  onExit,
+  testId,
+}: {
+  sticker: StickerOverlay;
+  editing: boolean;
+  onChange: (text: string) => void;
+  onExit: () => void;
+  testId: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.innerText !== sticker.text) {
+      el.innerText = sticker.text;
+    }
+    if (editing) {
+      el.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  }, [editing, sticker.text]);
+  return (
+    <span
+      ref={ref}
+      contentEditable={editing}
+      suppressContentEditableWarning
+      style={{
+        outline: "none",
+        cursor: editing ? "text" : undefined,
+        pointerEvents: editing ? "auto" : "none",
+        whiteSpace: "pre",
+      }}
+      onPointerDown={(e) => {
+        if (editing) e.stopPropagation();
+      }}
+      onBlur={(e) => {
+        const next = (e.currentTarget as HTMLSpanElement).innerText;
+        if (next !== sticker.text) onChange(next);
+        onExit();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.currentTarget as HTMLSpanElement).blur();
+        } else if (e.key === "Escape") {
+          (e.currentTarget as HTMLSpanElement).blur();
         }
       }}
       data-testid={testId}
