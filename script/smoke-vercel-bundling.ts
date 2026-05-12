@@ -1,7 +1,6 @@
 // Smoke test that emulates how Vercel imports api/*.ts at function-init
-// time and exercises the FULL request path — including the configured-key
-// branch that actually pulls in the prompt + Zhipu wrapper module. This is
-// the regression we are guarding against:
+// time and exercises the FULL request path. This is the regression we are
+// guarding against:
 //
 //   - Pre-PR #27, a missing key caused a top-level crash → Vercel
 //     FUNCTION_INVOCATION_FAILED page (no JSON, hard to surface to user).
@@ -9,16 +8,22 @@
 //     That defused the cold-start crash, but in production Vercel never
 //     bundled the shared file at all, so any request with a valid key hit
 //     a "Cannot find module '/var/task/shared/ai-prompt'" 500.
-//   - Current fix: the prompt runtime is a sibling file inside `api/`
-//     (`api/_ai-prompt.ts`) imported statically. Sibling files are always
-//     bundled and static imports are always traced.
+//   - PR #30 moved the runtime into a sibling `api/_ai-prompt.ts` imported
+//     statically — passed every test, but the deployed function STILL
+//     returned a generic text/plain FUNCTION_INVOCATION_FAILED page on the
+//     configured-key path, with no JSON and no useful logs.
+//   - Current fix: `api/generate-note.ts` is fully self-contained with ZERO
+//     value imports. Every helper (prompts, Zhipu HTTP call, validation,
+//     output parsing, timeout handling) is inlined. Cold start cannot fail
+//     on resolution / bundling because there is nothing to resolve. This
+//     smoke test enforces that property — see SOURCE INTEGRITY below.
 //
 // We test this by spawning a fresh Node process (no module cache shared
 // with the parent runner) for each case. The success cases mock fetch so
 // no real Zhipu key or network is required.
 
 import { spawnSync } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = process.cwd();
@@ -150,6 +155,51 @@ const childFile = join(repoRoot, "script", ".smoke-vercel-child.ts");
 writeFileSync(childFile, childSrc, "utf-8");
 
 try {
+  // ───────────────────── SOURCE INTEGRITY ──────────────────────────────
+  // The deployed Vercel function repeatedly returned a generic text/plain
+  // FUNCTION_INVOCATION_FAILED page on the configured-key path even after
+  // we moved helpers to a sibling `api/_ai-prompt.ts` (PR #30) and all
+  // smoke tests passed. We can't see Vercel's cold-start logs reliably, so
+  // we removed the only remaining variable: `api/generate-note.ts` must
+  // have ZERO value imports. Every helper is inlined. This static check
+  // enforces that — if anyone re-introduces an import, the smoke fails.
+  // ─────────────────────────────────────────────────────────────────────
+  const handlerSrc = readFileSync(
+    join(repoRoot, "api/generate-note.ts"),
+    "utf-8",
+  );
+  // Strip line + block comments before scanning so the long history
+  // comment block at the top doesn't trigger a false positive.
+  const stripped = handlerSrc
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  // Any `import` statement at all is a fail. Type-only imports are also
+  // disallowed because tsx / esbuild can't always erase them cleanly, and
+  // we want the handler to be reviewable as plain JS-compatible TS.
+  const importRe = /^\s*import\b[^;]*from\b[^;]*;/m;
+  if (importRe.test(stripped)) {
+    const m = stripped.match(importRe);
+    console.error(
+      "FAIL: api/generate-note.ts must have zero imports (fully self-contained).",
+    );
+    console.error("Offending import statement:", m && m[0]);
+    process.exit(1);
+  }
+  // Also flag dynamic `import("…")` calls — same risk.
+  if (/\bimport\s*\(/.test(stripped)) {
+    console.error(
+      "FAIL: api/generate-note.ts must not use dynamic import() (Vercel NFT cannot trace string args).",
+    );
+    process.exit(1);
+  }
+  // And `require("…")` calls — same risk on a CJS-resolved cold start.
+  if (/\brequire\s*\(/.test(stripped)) {
+    console.error(
+      "FAIL: api/generate-note.ts must not use require() at runtime.",
+    );
+    process.exit(1);
+  }
+
   const result = spawnSync(
     process.execPath,
     ["--import", "tsx/esm", childFile],
