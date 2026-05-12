@@ -9,21 +9,27 @@ import {
 } from "@/lib/app-state";
 import { STYLE_LIST } from "@/lib/styles";
 import { generateNote } from "@/lib/generate";
-import { analyzeViralReference, VIRAL_CUE_LABELS } from "@/lib/viral-style";
-import type { InputMode, UploadedImage } from "@/lib/types";
+import {
+  analyzeScreenshotFile,
+  SCREENSHOT_CUE_LABELS,
+  SCREENSHOT_MOOD_LABELS,
+} from "@/lib/screenshot-style";
+import type { InputMode, ScreenshotRef, UploadedImage } from "@/lib/types";
 import {
   Plus,
   Trash2,
   Upload,
   Sparkles,
   Image as ImageIcon,
-  Link2,
+  ImagePlus,
   Info,
   ChevronRight,
   ArrowRight,
   LayoutTemplate,
   Save,
   Check,
+  Loader2,
+  X,
 } from "lucide-react";
 
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
@@ -32,8 +38,55 @@ export default function CreatePage() {
   const [, navigate] = useLocation();
   const app = useApp();
   const fileRef = useRef<HTMLInputElement>(null);
+  const screenshotInputRef = useRef<HTMLInputElement>(null);
   const [generating, setGenerating] = useState(false);
   const [agentStep, setAgentStep] = useState(0);
+  // True while we're decoding + analyzing the uploaded reference screenshot.
+  // Surfaced as a spinner so the user knows the analyzer is running.
+  const [analyzingScreenshot, setAnalyzingScreenshot] = useState(false);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
+
+  async function onPickScreenshot(file: File | null | undefined) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setScreenshotError("请上传一张图片(支持 PNG/JPG/WEBP)。");
+      return;
+    }
+    setScreenshotError(null);
+    setAnalyzingScreenshot(true);
+    try {
+      const profile = await analyzeScreenshotFile(file);
+      const ref: ScreenshotRef = {
+        previewUrl: profile.previewUrl,
+        filename: profile.filename,
+        width: profile.width,
+        height: profile.height,
+        palette: profile.palette,
+        accent: profile.accent,
+        brightness: profile.brightness,
+        saturation: profile.saturation,
+        contrast: profile.contrast,
+        warmth: profile.warmth,
+        textDensity: profile.textDensity,
+        edgeDensity: profile.edgeDensity,
+        mood: profile.mood,
+        cues: profile.cues,
+        status: profile.status,
+      };
+      app.setScreenshotRef(ref);
+    } catch (err) {
+      console.warn("screenshot analysis failed", err);
+      setScreenshotError("截图分析失败,请换一张图片再试。");
+    } finally {
+      setAnalyzingScreenshot(false);
+      if (screenshotInputRef.current) screenshotInputRef.current.value = "";
+    }
+  }
+
+  function clearScreenshot() {
+    setScreenshotError(null);
+    app.setScreenshotRef(null);
+  }
 
   // Switch text-input mode. If the OTHER mode already has content, confirm
   // before clearing — A and B are mutually exclusive, so the previous mode's
@@ -197,7 +250,7 @@ export default function CreatePage() {
           <div className="leading-relaxed text-foreground/85">
             <strong>内容规则:</strong>
             我们不会编造你未提供的价格、服务体验、设施细节;信息不足时会自动用中性表述或提示你补充。
-            爆款笔记参考仅用于结构 / 节奏 / 标题逻辑分析,不会复制原文与图片。
+            爆款笔记截图仅用于学习色彩、版式与标题逻辑,不会复制原文与原图。
           </div>
         </div>
 
@@ -430,28 +483,63 @@ export default function CreatePage() {
               </div>
             </Section>
 
-            {/* Viral reference */}
+            {/* Screenshot-based viral-style learning */}
             <Section
               title="爆款笔记学习(可选)"
-              subtitle="粘贴小红书链接或完整分享文本,我们会学习其标题语气与节奏(不复制原文)"
+              subtitle="上传目标小红书笔记的截图,我们会学习它的色彩、版式与封面感(不复制原文与原图)"
               testId="section-viral"
             >
-              <div className="flex items-start gap-2">
-                <Link2 className="size-4 text-muted-foreground mt-2.5" />
-                <textarea
-                  value={app.state.viralRef}
-                  onChange={(e) => app.setViralRef(e.target.value)}
-                  rows={3}
-                  placeholder={"粘贴小红书爆款笔记链接,或整段分享文本。例如:\n49 【亚朵你还我萨和！！！😭 - 晨钟去哪玩 | 小红书】 hsj... https://www.xiaohongshu.com/discovery/item/..."}
-                  className="flex-1 text-sm bg-card border border-input rounded-md px-3 py-2 focus:border-primary focus:outline-none resize-y"
-                  data-testid="input-viral-link"
+              <input
+                ref={screenshotInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => onPickScreenshot(e.target.files?.[0] ?? null)}
+                data-testid="input-screenshot-file"
+              />
+              {!app.state.screenshotRef ? (
+                <button
+                  type="button"
+                  onClick={() => screenshotInputRef.current?.click()}
+                  disabled={analyzingScreenshot}
+                  className="w-full rounded-xl border border-dashed border-border bg-card/60 p-5 flex flex-col items-center gap-2 text-sm text-muted-foreground hover-elevate disabled:opacity-60"
+                  data-testid="button-upload-screenshot"
+                >
+                  <div className="size-9 rounded-xl bg-primary/10 text-primary inline-flex items-center justify-center">
+                    {analyzingScreenshot ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <ImagePlus className="size-4" />
+                    )}
+                  </div>
+                  <div className="font-medium text-foreground">
+                    {analyzingScreenshot ? "正在分析截图风格…" : "点击上传目标笔记截图"}
+                  </div>
+                  <div className="text-xs">
+                    PNG / JPG / WEBP · 仅本会话内分析,不上传服务器
+                  </div>
+                </button>
+              ) : (
+                <ScreenshotPanel
+                  refData={app.state.screenshotRef}
+                  onReplace={() => screenshotInputRef.current?.click()}
+                  onClear={clearScreenshot}
+                  busy={analyzingScreenshot}
                 />
-              </div>
-              <ViralLearningStatus value={app.state.viralRef} />
-              <p className="mt-2 text-xs text-muted-foreground">
-                受小红书登录态和爬虫规则限制,本应用不会代你访问原页面。
-                我们会从你粘贴的标题、emoji、标点和分享文本中提取语气线索,
-                据此调整本次生成的标题与开头节奏,不会复制原文与原图。
+              )}
+              {screenshotError && (
+                <p
+                  className="mt-2 text-[11px] text-amber-700 dark:text-amber-300"
+                  data-testid="screenshot-learning-error"
+                >
+                  {screenshotError}
+                </p>
+              )}
+              <p className="mt-3 text-xs text-muted-foreground">
+                受小红书登录态和反爬规则限制,本应用不会去抓取链接。
+                我们会从你上传的截图像素中提取色彩、明暗、对比度与版式线索,
+                据此调整本次生成的标题情绪、正文开头节奏与封面 / 内页配色,
+                <strong>不会复制原文与原图。</strong>
               </p>
             </Section>
           </div>
@@ -637,65 +725,131 @@ function Field({
   );
 }
 
-// Renders the learned-style summary for the 爆款笔记学习 block.
-// Visible only when the user has pasted something. Shows either the matched
-// cue chips ("已学习:强情绪标题 / 哭脸 emoji …"), or a fallback hint when
-// the share text was unsupported / blocked / yielded no usable cues.
-function ViralLearningStatus({ value }: { value: string }) {
-  const profile = analyzeViralReference(value);
-  if (!profile.hasInput) {
-    return (
-      <p
-        className="mt-2 text-[11px] text-muted-foreground"
-        data-testid="viral-learning-empty"
-      >
-        粘贴上方分享文本或链接后,这里会显示我们学到的语气特征。
-      </p>
-    );
-  }
+// Renders the uploaded reference-note screenshot + the cues we learned from
+// its pixels. Visible only after the user picks a screenshot. The actual
+// pixel analysis runs in `onPickScreenshot` and persists into app state, so
+// rendering here is a pure projection of the learned profile.
+function ScreenshotPanel({
+  refData,
+  onReplace,
+  onClear,
+  busy,
+}: {
+  refData: ScreenshotRef;
+  onReplace: () => void;
+  onClear: () => void;
+  busy: boolean;
+}) {
+  const moodLabel =
+    SCREENSHOT_MOOD_LABELS[refData.mood as keyof typeof SCREENSHOT_MOOD_LABELS] ??
+    refData.mood;
   return (
-    <div className="mt-3 space-y-2" data-testid="viral-learning-panel">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span
-          className="text-[11px] font-semibold text-foreground"
-          data-testid="viral-learning-status-label"
-        >
-          {profile.cues.length > 0 ? "已学习:" : "未提取到额外特征"}
-        </span>
-        {profile.cues.map((cue) => (
-          <span
-            key={cue}
-            className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium border border-primary/30"
-            data-testid={`viral-cue-${cue}`}
+    <div className="space-y-3" data-testid="screenshot-learning-panel">
+      <div className="flex gap-3 items-start">
+        {refData.previewUrl ? (
+          <div
+            className="relative size-20 shrink-0 overflow-hidden rounded-xl border border-card-border bg-muted"
+            data-testid="screenshot-learning-thumb"
           >
-            {VIRAL_CUE_LABELS[cue] ?? cue}
-          </span>
-        ))}
+            <img
+              src={refData.previewUrl}
+              alt={refData.filename || "reference screenshot"}
+              className="absolute inset-0 size-full object-cover"
+            />
+          </div>
+        ) : (
+          <div className="size-20 shrink-0 rounded-xl border border-dashed border-border bg-card/60" />
+        )}
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="inline-flex items-center rounded-full bg-foreground text-background px-2 py-0.5 text-[10px] font-semibold"
+              data-testid="screenshot-learning-mood"
+            >
+              {moodLabel}
+            </span>
+            {refData.filename && (
+              <span
+                className="text-[10px] text-muted-foreground truncate max-w-[12rem]"
+                data-testid="screenshot-learning-filename"
+                title={refData.filename}
+              >
+                {refData.filename}
+              </span>
+            )}
+            <div
+              className="flex items-center gap-1"
+              data-testid="screenshot-learning-palette"
+            >
+              {refData.palette.map((c, i) => (
+                <span
+                  key={`${c}_${i}`}
+                  className="size-3.5 rounded-full border border-card-border"
+                  style={{ backgroundColor: c }}
+                  data-testid={`screenshot-palette-${i}`}
+                  title={c}
+                />
+              ))}
+              <span
+                className="size-3.5 rounded-full ring-2 ring-offset-1 ring-foreground/60 border border-card-border"
+                style={{ backgroundColor: refData.accent }}
+                data-testid="screenshot-accent"
+                title={`accent ${refData.accent}`}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {refData.cues.length === 0 ? (
+              <span
+                className="text-[10px] text-muted-foreground"
+                data-testid="screenshot-learning-empty-cues"
+              >
+                未提取到额外的版式特征,本次仅沿用色彩基调。
+              </span>
+            ) : (
+              refData.cues.map((cue) => (
+                <span
+                  key={cue}
+                  className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium border border-primary/30"
+                  data-testid={`screenshot-cue-${cue}`}
+                >
+                  {SCREENSHOT_CUE_LABELS[cue as keyof typeof SCREENSHOT_CUE_LABELS] ?? cue}
+                </span>
+              ))
+            )}
+          </div>
+          <p
+            className="text-[10px] text-muted-foreground leading-relaxed"
+            data-testid="screenshot-learning-status-text"
+          >
+            {refData.status}
+          </p>
+        </div>
       </div>
-      {profile.extractedTitle && (
-        <div
-          className="text-[10px] text-muted-foreground truncate"
-          data-testid="viral-learning-original-title"
-          title={profile.extractedTitle}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onReplace}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate disabled:opacity-60"
+          data-testid="button-screenshot-replace"
         >
-          原标题(仅用于学习,不会复制):{profile.extractedTitle}
-        </div>
-      )}
-      {profile.isFallback && (
-        <div
-          className="text-[10px] text-amber-600 dark:text-amber-300"
-          data-testid="viral-learning-fallback"
+          {busy ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <ImagePlus className="size-3" />
+          )}
+          {busy ? "正在分析…" : "换一张截图"}
+        </button>
+        <button
+          type="button"
+          onClick={onClear}
+          className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-[11px] hover-elevate"
+          data-testid="button-screenshot-clear"
         >
-          未识别到小红书链接,我们已尝试从粘贴的文本中学习。
-          如需更精准的学习,可在文本里保留 【标题】 部分。
-        </div>
-      )}
-      <p
-        className="text-[10px] text-muted-foreground leading-relaxed"
-        data-testid="viral-learning-status-text"
-      >
-        {profile.status}
-      </p>
+          <X className="size-3" /> 清除截图
+        </button>
+      </div>
     </div>
   );
 }
