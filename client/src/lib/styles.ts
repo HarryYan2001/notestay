@@ -113,7 +113,7 @@ export const STYLES: Record<StyleKey, StyleDef> = {
     palette: ["#FFEDED", "#FF4D5E", "#1F1F1F"],
     vibe: "信息量、对比强、抓眼球",
     titlePrefixes: ["真的会爱上！", "蹲到了", "求求你们一定要住"],
-    titleSuffixes: ["巨出片！！", "性价比天花板", "封神入住"],
+    titleSuffixes: ["巨出片！！", "真心想再住一次", "封神入住"],
     toneAdjectives: ["夸张", "热情", "信息感", "爆款体"],
     emojiSet: ["🚨", "🔥", "📍", "✨", "🤍"],
     coverHeadline: "蹲到了！这家必须冲",

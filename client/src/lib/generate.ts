@@ -53,17 +53,53 @@ function selectCoverImage(images: UploadedImage[]): UploadedImage | undefined {
   return priority.map((category) => images.find((img) => img.category === category)).find(Boolean) || images[0];
 }
 
-function polishUserLine(text: string, seed: number): string {
-  const cleaned = text.trim().replace(/\s+/g, " ");
+// Phrases we never want to surface in any generated copy.
+const BANNED_PHRASES = [
+  "不得不说",
+  "总体而言",
+  "综合来说",
+  "性价比之选",
+  "性价比天花板",
+  "宝藏酒店",
+];
+
+function stripBanned(text: string): string {
+  let out = text;
+  for (const p of BANNED_PHRASES) {
+    out = out.split(p).join("");
+  }
+  // Clean up artifacts that can appear after deletions:
+  //   - orphan / duplicated sentence-ending punctuation (incl. ones separated by whitespace)
+  //   - leading punctuation on a line
+  //   - excess horizontal whitespace
+  // Newlines are structural and must be preserved.
+  out = out
+    // Drop comma-then-punctuation runs: "，。" → "。"
+    .replace(/[,，、](?=[ \t]*[,，、。!?！？])/g, "")
+    // Collapse runs of the same/different sentence-end punctuation, possibly spaced.
+    // e.g. "。。" → "。", "。 。" → "。", "！。" → "！".
+    .replace(/([。!?！？])(?:[ \t]*[。!?！？])+/g, "$1")
+    // Strip leading punctuation / whitespace at the start of each line.
+    .replace(/(^|\n)[,，、。!?！？ \t]+/g, "$1")
+    .replace(/[ \t]{2,}/g, " ");
+  return out;
+}
+
+function countCjk(text: string): number {
+  let n = 0;
+  for (const ch of text) {
+    if (/[一-鿿]/.test(ch)) n++;
+  }
+  return n;
+}
+
+// Group user-provided framework text into a friendly, oral paragraph without
+// AI-style connective phrases. Returns the body text only (no heading).
+function naturalizeUserLine(text: string): string {
+  const cleaned = stripBanned(text.trim().replace(/\s+/g, " "));
   if (!cleaned) return cleaned;
-  const openings = [
-    "真实入住下来,最明显的感受是",
-    "从我的实拍和体验看,比较值得记录的是",
-    "这部分不夸张,我会这样概括:",
-    "如果要写给正在做功课的人,重点是",
-  ];
-  const ending = cleaned.endsWith("。") || cleaned.endsWith("!") || cleaned.endsWith("！") ? "" : "。";
-  return `${pick(openings, seed)}${cleaned.length > 42 ? " " : ":"}${cleaned}${ending}`;
+  const endsWithPunct = /[。！？!?…]$/.test(cleaned);
+  return endsWithPunct ? cleaned : `${cleaned}。`;
 }
 
 export function generateNote(input: AppInputState): GeneratedNote {
@@ -110,99 +146,171 @@ export function generateNote(input: AppInputState): GeneratedNote {
     "这家酒店";
   const prefix = pick(style.titlePrefixes, seed);
   const suffix = pick(style.titleSuffixes, seed + 7);
-  const title = `${prefix}${subject}｜${suffix}`;
+  const title = stripBanned(`${prefix}${subject}｜${suffix}`);
   const coverHeadlines = [
     `${subject}\n真的很会住!`,
     `这家酒店\n太适合收藏!`,
-    `被低估的\n宝藏酒店`,
     `住进这里\n像在度假`,
     `${subject}\n出片到离谱`,
+    `安利给\n爱住酒店的你`,
   ];
-  const coverHeadline = pick(coverHeadlines, seed + 29);
+  const coverHeadline = stripBanned(pick(coverHeadlines, seed + 29));
   const altTitles = [
-    `${city ? `${city}｜` : ""}${subject}｜${pick(style.titleSuffixes, seed + 13)}`,
-    `${pick(style.titlePrefixes, seed + 17)}${subject}｜${pick(style.toneAdjectives, seed + 3)}到想再来一次`,
-    `${subject}｜${pick(style.toneAdjectives, seed + 5)}入住,${pick(style.titleSuffixes, seed + 23)}`,
+    stripBanned(`${city ? `${city}｜` : ""}${subject}｜${pick(style.titleSuffixes, seed + 13)}`),
+    stripBanned(`${pick(style.titlePrefixes, seed + 17)}${subject}｜${pick(style.toneAdjectives, seed + 3)}到想再来一次`),
+    stripBanned(`${subject}｜${pick(style.toneAdjectives, seed + 5)}入住,${pick(style.titleSuffixes, seed + 23)}`),
   ];
 
-  // 3) Body paragraphs — combine framework / freeform + facts + style tone
+  // 3) Body — Xiaohongshu travel blogger voice.
+  //    Structure: opening hook (not "这次来到..."), emoji-headed sections only
+  //    for content the user actually mentioned, optional price line in 【】,
+  //    one collectible closing line. Target ~500 CJK chars, hard cap 600.
   const tone = pick(style.toneAdjectives, seed + 1);
-  const emoji = style.emojiSet;
 
-  const intro: string[] = [];
-  intro.push(`${emoji[0]} 这次入住${subject},整体感受可以用一个词形容: ${tone}。这篇会尽量按真实体验来写,不补不存在的信息。`);
-  if (city || stayDate) {
-    const parts: string[] = [];
-    if (city) parts.push(`坐标 ${city}`);
-    if (stayDate) parts.push(`入住时间 ${stayDate}`);
-    intro.push(`📍 ${parts.join(" · ")}。`);
+  // Section heading bank — emoji + Chinese label. We only render the ones
+  // the user actually mentioned, in this order.
+  // Sections are matched in this order. Breakfast comes before service so that
+  // a chunk like "早餐种类不多，但咖啡还可以" doesn't get routed to 服务 just
+  // because the user happened to label the framework slot "服务".
+  const SECTION_BANK: { keys: string[]; emoji: string; label: string }[] = [
+    { keys: ["位置", "地段", "交通", "周边", "出行"], emoji: "📍", label: "位置" },
+    { keys: ["第一印象", "印象", "门面", "外观", "大堂", "lobby"], emoji: "✨", label: "第一印象" },
+    { keys: ["早餐", "餐食", "咖啡", "buffet", "自助餐"], emoji: "🍳", label: "早餐" },
+    { keys: ["房间", "房型", "空间", "床", "床品", "卫浴", "浴室"], emoji: "🛏️", label: "房间" },
+    { keys: ["服务", "前台", "礼宾", "管家", "态度"], emoji: "🛎️", label: "服务" },
+    { keys: ["设施", "泳池", "健身", "spa", "酒吧", "lounge"], emoji: "🏊", label: "设施" },
+    { keys: ["夜景", "view", "景观", "落地窗"], emoji: "🌃", label: "景观" },
+  ];
+
+  // Match on the value first (it carries the actual content). Only fall back
+  // to the framework label when the value gives no signal — otherwise a slot
+  // labeled "服务" with breakfast content would be misrouted.
+  function pickSection(label: string, value: string) {
+    const valLower = value.toLowerCase();
+    for (const s of SECTION_BANK) {
+      if (s.keys.some((k) => valLower.includes(k.toLowerCase()))) return s;
+    }
+    const labLower = label.toLowerCase();
+    for (const s of SECTION_BANK) {
+      if (s.keys.some((k) => labLower.includes(k.toLowerCase()))) return s;
+    }
+    return null;
   }
-  if (roomType) intro.push(`房型选的是「${roomType}」。`);
-  if (brand && !hotelName) intro.push(`属于 ${brand} 旗下,品牌一贯的调性这次依旧在线。`);
 
-  const sceneBlocks: string[] = [];
+  type Section = { emoji: string; label: string; text: string };
+  const sections: Section[] = [];
+
   if (input.inputMode === "framework") {
     for (let i = 0; i < frameworkBlocks.length; i++) {
       const b = frameworkBlocks[i];
-      sceneBlocks.push(`【${b.label}】\n${polishUserLine(b.value, seed + i)}`);
+      const matched = pickSection(b.label, b.value);
+      const emoji = matched?.emoji ?? "📝";
+      const label = matched?.label ?? (b.label || "记一笔");
+      sections.push({ emoji, label, text: naturalizeUserLine(b.value) });
     }
   } else if (freeText) {
-    // Slightly polish free-form text into 2-3 paragraphs by splitting on punctuation / newlines.
-    const chunks = freeText
+    // Split free text into chunks and route each chunk to the best-matching section.
+    const chunks = stripBanned(freeText)
       .replace(/\r/g, "")
       .split(/\n+|(?<=[。！？!?])\s*/)
       .map((s) => s.trim())
       .filter(Boolean);
-    const grouped: string[] = [];
-    let buf: string[] = [];
+    const bucket = new Map<string, { emoji: string; label: string; parts: string[] }>();
+    const leftovers: string[] = [];
     for (const c of chunks) {
-      buf.push(c);
-      if (buf.join("").length > 60) {
-        grouped.push(buf.join(""));
-        buf = [];
+      const matched = pickSection("", c);
+      if (matched) {
+        const key = matched.label;
+        const entry = bucket.get(key) ?? { emoji: matched.emoji, label: matched.label, parts: [] };
+        entry.parts.push(c);
+        bucket.set(key, entry);
+      } else {
+        leftovers.push(c);
       }
     }
-    if (buf.length) grouped.push(buf.join(""));
-    grouped.forEach((g, i) => {
-      const label = ["入住感受", "空间细节", "服务体验", "周边体验"][i] || "其他记录";
-      sceneBlocks.push(`【${label}】\n${polishUserLine(g, seed + i)}`);
-    });
+    for (const s of SECTION_BANK) {
+      const entry = bucket.get(s.label);
+      if (entry) sections.push({ emoji: entry.emoji, label: entry.label, text: naturalizeUserLine(entry.parts.join("")) });
+    }
+    if (leftovers.length) {
+      sections.push({ emoji: "📝", label: "记一笔", text: naturalizeUserLine(leftovers.join("")) });
+    }
   }
 
-  const verdict: string[] = [];
-  verdict.push(`${emoji[emoji.length - 1] ?? "✨"} 总结一句话: ${pick(style.titleSuffixes, seed + 11)}。`);
-  if (price) verdict.push(`💰 这次入住的实际价格: ${price}(以本人订单为准,价格随日期波动,大家可自行比价)。`);
-  else verdict.push(`💰 价格信息暂未填写,大家可以自行去常用平台比价。`);
-  if (input.images.length > 0) {
-    verdict.push(`📸 这篇笔记的图片均为本人入住实拍,封面与内页排版仅做风格参考。`);
-  } else {
-    verdict.push(`📸 本篇暂未上传实拍图,内页版式为可参考排版,不代表实际房间画面。`);
+  // Opening hook — name the core feeling, do NOT start with "这次来到...".
+  const hookBank = [
+    `真的，住完只想说一句：${tone}得想再来一次。`,
+    `先说结论，这一晚${tone}到不舍得退房。`,
+    `老实讲，住完的第一反应就是：好${tone}。`,
+    `给嘴硬的我跪了，这家${tone}得有点上头。`,
+    `没夸张，住进去那一刻心情就被${tone}拿捏了。`,
+  ];
+  const opening = stripBanned(pick(hookBank, seed + 31));
+
+  // Optional context line (city / stay date / room type) — only if provided.
+  const ctxParts: string[] = [];
+  if (city) ctxParts.push(`坐标${city}`);
+  if (stayDate) ctxParts.push(`入住${stayDate}`);
+  if (roomType) ctxParts.push(`房型「${roomType}」`);
+  const contextLine = ctxParts.length ? `📍 ${ctxParts.join(" · ")}` : null;
+
+  // Price as its own standalone line wrapped in 【】, only if user supplied it.
+  const priceLine = price ? `【价格: ${price}】` : null;
+
+  // Closing collectible one-sentence summary — must avoid prohibited phrases.
+  const closingBank = [
+    `小本本记一下：想住得舒服又出片，这家可以放进收藏夹。`,
+    `愿意为它专程再来一次，这一句就够了。`,
+    `给同样爱住酒店的你：值得抄作业的一晚。`,
+    `存这条，下次想给自己一个慢一点的周末就来。`,
+    `如果你和我一样在意细节，把它加进愿望清单不亏。`,
+  ];
+  const closing = stripBanned(pick(closingBank, seed + 41));
+
+  // Compose body. Drop sections one by one if we exceed 600 CJK chars.
+  function compose(usedSections: Section[]): string {
+    const lines: string[] = [];
+    lines.push(opening);
+    if (contextLine) lines.push(contextLine);
+    if (priceLine) lines.push(priceLine);
+    for (const s of usedSections) {
+      lines.push("");
+      lines.push(`${s.emoji} ${s.label}`);
+      lines.push(s.text);
+    }
+    lines.push("");
+    lines.push(closing);
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  const body = [...intro, "", ...sceneBlocks.flatMap((b) => [b, ""]), ...verdict]
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  // 4) Tags
-  const baseTags = ["酒店测评", "旅行日记", "出片酒店", "住宿推荐"];
-  const styleTag = `#${style.name}`;
-  const tagSet = new Set<string>([
-    `#${style.name}`,
-    "#酒店测评",
-    "#住宿推荐",
-    "#旅行vlog",
-  ]);
-  if (city) {
-    tagSet.add(`#${city}`);
-    tagSet.add(`#${city}酒店`);
-    tagSet.add(`#${city}旅行`);
+  let body = compose(sections);
+  // Soft target 500, hard cap 600 CJK chars.
+  while (countCjk(body) > 600 && sections.length > 1) {
+    sections.pop();
+    body = compose(sections);
   }
-  if (brand) tagSet.add(`#${brand}`);
-  if (hotelName) tagSet.add(`#${hotelName}`);
-  baseTags.forEach((t) => tagSet.add(`#${t}`));
-  void styleTag;
-  const tags = Array.from(tagSet).slice(0, 12);
+  if (countCjk(body) > 600) {
+    // Last resort: hard trim closing/section text.
+    const trimmedSections = sections.map((s) => ({
+      ...s,
+      text: s.text.length > 80 ? s.text.slice(0, 80) + "…" : s.text,
+    }));
+    body = compose(trimmedSections);
+  }
+  body = stripBanned(body);
+
+  // 4) Tags — keep 3-5 most relevant hashtags.
+  const orderedTags: string[] = [];
+  const pushTag = (t: string) => {
+    const v = `#${t.replace(/^#/, "").trim()}`;
+    if (v !== "#" && !orderedTags.includes(v)) orderedTags.push(v);
+  };
+  if (city) pushTag(`${city}酒店`);
+  if (hotelName) pushTag(hotelName);
+  pushTag("酒店测评");
+  pushTag("住宿推荐");
+  pushTag(style.name);
+  const tags = orderedTags.slice(0, 5);
 
   // 5) Comment seeds
   const commentSeeds = [
