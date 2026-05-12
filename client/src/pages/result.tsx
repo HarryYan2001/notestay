@@ -10,9 +10,9 @@ import { PageFlat } from "@/components/page-flat";
 import { PhonePreview } from "@/components/phone-preview";
 import { XhsImport } from "@/components/xhs-import";
 import {
-  elementToPng,
   exportPagesAsZip,
   exportPagesSequentially,
+  renderPageDesignToPng,
 } from "@/lib/export-pages";
 import {
   Copy,
@@ -109,9 +109,14 @@ export default function ResultPage() {
     // Wait one tick to ensure offscreen frames mounted with current state
     await new Promise((r) => setTimeout(r, 50));
     for (const page of note.pageLayout) {
-      const el = exportRefs.current[page.index];
-      if (!el) continue;
-      const dataUrl = await elementToPng(el, EXPORT_WIDTH, exportHeight);
+      const design =
+        note.pageDesigns[page.index] || {
+          background: page.gradient,
+          bgImageUrl: null,
+          layers: [],
+        };
+      const pageStickers = note.stickers.filter((s) => s.pageIndex === page.index);
+      const dataUrl = await renderPageDesignToPng(design, pageStickers, EXPORT_WIDTH, exportHeight);
       results.push({
         name: `notestay_page_${String(page.index + 1).padStart(2, "0")}.png`,
         dataUrl,
