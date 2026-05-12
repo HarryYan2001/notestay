@@ -449,4 +449,16 @@ function countCjk(text: string): number {
   assert(note.cover.layers.length > 0, "cover should still have design layers");
 }
 
+// Case 21: cover page must not auto-attach any stickers by default. The user
+// can still add stickers (including presets) via the editor.
+{
+  const images = [
+    { id: "img1", url: "blob:test-1", name: "room.jpg", category: "房间" },
+  ];
+  const note = generateNote(baseInput({ images }));
+  console.log("--- no default stickers on cover ---");
+  assert(note.stickers.length === 0,
+    `cover must have no auto-added stickers (got ${note.stickers.length})`);
+}
+
 console.log("\nOK: all copy smoke assertions passed.");

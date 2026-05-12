@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   Sparkles,
   Plus,
+  Trash2,
 } from "lucide-react";
 
 const EXPORT_WIDTH = 720; // px (3:4 aspect → 720x960)
@@ -76,6 +77,41 @@ export default function ResultPage() {
   // no stickers. The new page is appended after the last existing page,
   // becomes selectable, and is automatically picked up by phone preview and
   // export because they read from note.pageLayout / note.pageDesigns.
+  // Remove the currently selected page from the deck. Guards against removing
+  // the last remaining page so the editor always has something to render, and
+  // keeps the user pointed at a valid neighbor after deletion. Stickers bound
+  // to the deleted page are dropped; designs for other pages are preserved.
+  function deleteSelectedPage() {
+    if (!app.generated) return;
+    const pages = app.generated.pageLayout;
+    if (pages.length <= 1) return;
+    const removeIndex = selectedPageIndex;
+    const removeOrd = pages.findIndex((p) => p.index === removeIndex);
+    if (removeOrd < 0) return;
+    const nextPages = pages.filter((p) => p.index !== removeIndex);
+    const nextDesigns: Record<number, PageDesign> = {};
+    for (const [k, v] of Object.entries(app.generated.pageDesigns)) {
+      const n = Number(k);
+      if (n !== removeIndex) nextDesigns[n] = v;
+    }
+    const nextStickers = app.generated.stickers.filter(
+      (s) => s.pageIndex !== removeIndex,
+    );
+    const neighbor = nextPages[Math.min(removeOrd, nextPages.length - 1)];
+    const next: GeneratedNote = {
+      ...app.generated,
+      pageLayout: nextPages,
+      pageDesigns: nextDesigns,
+      stickers: nextStickers,
+      cover:
+        removeIndex === 0 && nextPages[0]
+          ? nextDesigns[nextPages[0].index] || app.generated.cover
+          : app.generated.cover,
+    };
+    app.setGenerated(next);
+    setSelectedPageIndex(neighbor.index);
+  }
+
   function addBlankPage() {
     if (!app.generated) return;
     const style = STYLES[app.generated.styleKey];
@@ -356,14 +392,30 @@ export default function ResultPage() {
                   <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
                     快速切换页面
                   </div>
-                  <button
-                    type="button"
-                    onClick={addBlankPage}
-                    className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 text-primary px-3 py-1 text-xs hover-elevate"
-                    data-testid="button-add-page"
-                  >
-                    <Plus className="size-3.5" /> 增加页面
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={deleteSelectedPage}
+                      disabled={note.pageLayout.length <= 1}
+                      className="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 text-destructive px-3 py-1 text-xs hover-elevate disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid="button-delete-page"
+                      title={
+                        note.pageLayout.length <= 1
+                          ? "至少需要保留一张页面"
+                          : "删除当前选中的页面"
+                      }
+                    >
+                      <Trash2 className="size-3.5" /> 删除页面
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addBlankPage}
+                      className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 text-primary px-3 py-1 text-xs hover-elevate"
+                      data-testid="button-add-page"
+                    >
+                      <Plus className="size-3.5" /> 增加页面
+                    </button>
+                  </div>
                 </div>
                 <div className="flex gap-2 overflow-x-auto pb-2 scroll-area-hide" data-testid="row-page-picker">
                   {note.pageLayout.map((p, i) => (
