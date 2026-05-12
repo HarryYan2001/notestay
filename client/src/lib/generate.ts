@@ -204,8 +204,8 @@ export function generateNote(input: AppInputState): GeneratedNote {
     // 卫生间 / 浴室 — bathroom facilities. Must come BEFORE 卫生 so 卫生间
     // does not collapse into the cleanliness dimension.
     {
-      keys: ["卫生间", "浴室", "干湿分离", "花洒", "热水", "洗澡", "马桶", "洗漱台", "淋浴", "下水", "水压"],
-      strongKeys: ["卫生间", "干湿分离", "花洒", "淋浴", "马桶"],
+      keys: ["卫生间", "洗手间", "浴室", "干湿分离", "花洒", "热水", "洗澡", "马桶", "洗漱台", "淋浴", "下水", "水压"],
+      strongKeys: ["卫生间", "洗手间", "干湿分离", "花洒", "淋浴", "马桶"],
       emoji: "🚿",
       label: "卫生间",
     },
@@ -213,7 +213,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     {
       keys: ["卫生", "干净", "清洁", "打扫", "灰尘", "污渍", "异味", "缝隙", "床单", "毛发", "一尘不染"],
       strongKeys: ["干净", "清洁", "打扫", "灰尘", "污渍", "异味"],
-      avoidKeys: ["卫生间", "浴室", "干湿分离", "花洒", "热水", "洗澡", "马桶", "淋浴"],
+      avoidKeys: ["卫生间", "洗手间", "浴室", "干湿分离", "花洒", "热水", "洗澡", "马桶", "淋浴"],
       emoji: "🧼",
       label: "卫生",
     },
@@ -234,6 +234,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     {
       keys: [
         "房间", "房型", "空间", "床", "床品", "床垫", "枕头", "被子",
+        "落地窗", "推开门",
         "电视", "冰箱", "茶包", "咖啡机", "胶囊", "矿泉水", "迎宾水", "办公", "桌椅", "衣柜", "灯光", "插座",
       ],
       emoji: "🛏️",
@@ -241,7 +242,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     },
     { keys: ["服务", "前台", "礼宾", "管家", "态度"], emoji: "🛎️", label: "服务" },
     { keys: ["设施", "泳池", "健身", "spa", "酒吧", "lounge", "健身房"], emoji: "🏊", label: "设施" },
-    { keys: ["夜景", "view", "景观", "落地窗", "海景", "江景", "山景"], emoji: "🌃", label: "景观" },
+    { keys: ["夜景", "view", "景观", "海景", "江景", "山景"], emoji: "🌃", label: "景观" },
     { keys: ["入住体验", "整体体验", "总体感受"], emoji: "💭", label: "入住体验" },
   ];
 
@@ -318,20 +319,103 @@ export function generateNote(input: AppInputState): GeneratedNote {
     if (secs.length === 0) return;
 
     // Split a section text into fragments on sentence-ending punctuation,
-    // preserving the punctuation with the fragment that precedes it.
+    // preserving the punctuation with the fragment that precedes it. If a
+    // single sentence contains clauses that map to different dimensions
+    // (e.g. "推开门是落地窗，床品柔软，洗手间干湿分离很舒服。" — the first
+    // two clauses are 房间, the third is 卫生间), split further on
+    // ，、；,; so each clause can be reclassified independently. We only
+    // emit clause-level fragments when the clauses actually cross
+    // dimensions; otherwise the original sentence stays whole so noun
+    // lists ("床、灯光、插座") within a single dimension are not chopped up.
+    function splitClauses(sentence: string): string[] {
+      const parts: string[] = [];
+      let buf = "";
+      for (const ch of sentence) {
+        if (/[，、；,;]/.test(ch)) {
+          const t = buf.trim();
+          if (t) parts.push(t);
+          buf = "";
+        } else {
+          buf += ch;
+        }
+      }
+      const tail = buf.trim();
+      if (tail) parts.push(tail);
+      return parts;
+    }
+
     function splitFragments(text: string): string[] {
-      const out: string[] = [];
+      const sentences: string[] = [];
       let buf = "";
       for (const ch of text) {
         buf += ch;
         if (/[。！？!?…]/.test(ch)) {
           const t = buf.trim();
-          if (t) out.push(t);
+          if (t) sentences.push(t);
           buf = "";
         }
       }
       const tail = buf.trim();
-      if (tail) out.push(tail);
+      if (tail) sentences.push(tail);
+
+      const out: string[] = [];
+      for (const sent of sentences) {
+        const clauses = splitClauses(sent);
+        if (clauses.length <= 1) {
+          out.push(sent);
+          continue;
+        }
+        // Classify each clause; if the clauses cross dimensions
+        // (more than one distinct standard label appears), emit them
+        // separately so each can be re-routed. Otherwise keep the
+        // sentence whole.
+        const labels = clauses.map((c) => pickSection("", c)?.label ?? null);
+        const distinct = new Set(labels.filter((l): l is string => l !== null));
+        if (distinct.size <= 1) {
+          out.push(sent);
+          continue;
+        }
+        // Multi-dimension sentence: emit each clause. Clauses that
+        // didn't match any dimension on their own attach to the
+        // previous matched clause so we don't strand bare connective
+        // phrases like "很舒服". Each emitted fragment ends with 。
+        // so downstream joining keeps natural sentence boundaries.
+        const emitted: string[] = [];
+        const emittedLabels: (string | null)[] = [];
+        for (let i = 0; i < clauses.length; i++) {
+          const lab = labels[i];
+          if (lab !== null) {
+            emitted.push(clauses[i]);
+            emittedLabels.push(lab);
+          } else if (emitted.length > 0) {
+            emitted[emitted.length - 1] = `${emitted[emitted.length - 1]}，${clauses[i]}`;
+          } else {
+            emitted.push(clauses[i]);
+            emittedLabels.push(null);
+          }
+        }
+        // Merge consecutive clauses that share the same label so noun
+        // lists within one dimension stay together as one fragment.
+        let mergedBuf = "";
+        let mergedLabel: string | null | undefined;
+        for (let i = 0; i < emitted.length; i++) {
+          if (mergedLabel === undefined) {
+            mergedBuf = emitted[i];
+            mergedLabel = emittedLabels[i];
+            continue;
+          }
+          if (emittedLabels[i] === mergedLabel) {
+            mergedBuf = `${mergedBuf}，${emitted[i]}`;
+          } else {
+            out.push(/[。！？!?…]$/.test(mergedBuf) ? mergedBuf : `${mergedBuf}。`);
+            mergedBuf = emitted[i];
+            mergedLabel = emittedLabels[i];
+          }
+        }
+        if (mergedBuf) {
+          out.push(/[。！？!?…]$/.test(mergedBuf) ? mergedBuf : `${mergedBuf}。`);
+        }
+      }
       return out;
     }
 

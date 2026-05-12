@@ -363,4 +363,51 @@ function countCjk(text: string): number {
     "review: 房间 section must not retain bathroom-facility content");
 }
 
+// Case 18: clause-level splitting — a single sentence that mixes 房间 and
+// 卫生间 dimensions ("推开门是落地窗，床品柔软，洗手间干湿分离很舒服。")
+// must split on Chinese commas. 落地窗/床品 route to 🛏️ 房间; 洗手间干湿分离
+// routes to 🚿 卫生间. Reproduces a real generator misclassification.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "房间", value: "推开门是落地窗，床品柔软，洗手间干湿分离很舒服。" },
+      ],
+    }),
+  );
+  console.log("--- clause-level: mixed 房间/卫生间 sentence ---");
+  console.log(note.body);
+  assert(note.body.includes("🛏️ 房间"), "clause: should have 🛏️ 房间 section");
+  assert(note.body.includes("🚿 卫生间"), "clause: should have 🚿 卫生间 section");
+  const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
+  const bathPart = note.body.split("🚿 卫生间")[1]?.split(/\n\n/)[0] ?? "";
+  assert(roomPart.includes("落地窗") && roomPart.includes("床品"),
+    "clause: 房间 section must contain 落地窗 and 床品 clauses");
+  assert(!roomPart.includes("干湿分离"),
+    "clause: 房间 section must NOT contain 干湿分离");
+  assert(bathPart.includes("干湿分离") || bathPart.includes("洗手间"),
+    "clause: 卫生间 section must contain the bathroom clause");
+  assert(!bathPart.includes("落地窗") && !bathPart.includes("床品"),
+    "clause: 卫生间 section must NOT absorb the room clauses");
+}
+
+// Case 19: clause-level splitting must NOT chop a single-dimension noun list.
+// "床很大，灯光也调得刚好，桌椅齐全。" is all 房间; it should stay as one
+// natural sentence in 🛏️ 房间.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "房间", value: "床很大，灯光也调得刚好，桌椅齐全。" },
+      ],
+    }),
+  );
+  console.log("--- clause-level: same-dimension noun list stays whole ---");
+  console.log(note.body);
+  assert(note.body.includes("🛏️ 房间"), "clause: single-dim sentence should still land in 🛏️ 房间");
+  const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
+  assert(roomPart.includes("床") && roomPart.includes("灯光") && roomPart.includes("桌椅"),
+    "clause: same-dimension noun list must stay together in one section");
+}
+
 console.log("\nOK: all copy smoke assertions passed.");
