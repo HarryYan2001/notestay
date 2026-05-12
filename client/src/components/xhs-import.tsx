@@ -11,6 +11,7 @@ interface Props {
 export function XhsImport({ note }: Props) {
   const [status, setStatus] = useState<"idle" | "copying" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [showManualCopy, setShowManualCopy] = useState(false);
 
   function buildClipboardPayload(): string {
     const tagLine = note.tags
@@ -27,10 +28,7 @@ export function XhsImport({ note }: Props) {
       .join("\n");
   }
 
-  async function handleOneClick() {
-    setError(null);
-    setStatus("copying");
-    const payload = buildClipboardPayload();
+  async function copyPayload(payload: string): Promise<boolean> {
     let copied = false;
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -56,19 +54,37 @@ export function XhsImport({ note }: Props) {
       copied = false;
       setError(e instanceof Error ? e.message : "复制失败");
     }
-    if (!copied) {
-      setStatus("error");
-      return;
-    }
-    // Try opening the Xiaohongshu publish page in a new tab
+    return copied;
+  }
+
+  async function handleOneClick() {
+    setError(null);
+    setShowManualCopy(false);
+    setStatus("copying");
+    const payload = buildClipboardPayload();
+
+    let opened = false;
     try {
       const w = window.open(XHS_CREATOR_URL, "_blank", "noopener,noreferrer");
-      if (!w) {
-        // popup blocked — fallback to current tab navigation guarded
-        setError("浏览器拦截了新标签页,请手动点击下方链接前往小红书发布页。");
-      }
+      opened = Boolean(w);
     } catch {
-      // ignore — link button below remains
+      opened = false;
+    }
+
+    const copied = await copyPayload(payload);
+    if (!copied) {
+      setStatus("error");
+      setShowManualCopy(true);
+      setError(
+        opened
+          ? "已尝试打开小红书发布页,但浏览器没有允许自动复制。请使用下方文本框手动复制后粘贴。"
+          : "浏览器拦截了新标签页,也没有允许自动复制。请使用下方文本框手动复制,并点击「仅打开小红书发布页」。",
+      );
+      return;
+    }
+
+    if (!opened) {
+      setError("文案已复制,但浏览器拦截了新标签页。请点击「仅打开小红书发布页」继续。");
     }
     setStatus("done");
   }
@@ -114,11 +130,22 @@ export function XhsImport({ note }: Props) {
         <button
           type="button"
           onClick={async () => {
+            setError(null);
+            setShowManualCopy(false);
+            const payload = buildClipboardPayload();
             try {
-              await navigator.clipboard.writeText(buildClipboardPayload());
-              setStatus("done");
+              const copied = await copyPayload(payload);
+              if (copied) {
+                setStatus("done");
+              } else {
+                setShowManualCopy(true);
+                setStatus("error");
+                setError("浏览器没有允许自动复制。请使用下方文本框手动复制。");
+              }
             } catch {
+              setShowManualCopy(true);
               setStatus("error");
+              setError("浏览器没有允许自动复制。请使用下方文本框手动复制。");
             }
           }}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-card text-sm hover-elevate"
@@ -140,6 +167,19 @@ export function XhsImport({ note }: Props) {
         <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300" data-testid="xhs-status-error">
           <AlertTriangle className="size-4 mt-0.5 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {showManualCopy && (
+        <div className="space-y-2" data-testid="xhs-manual-copy-block">
+          <p className="text-xs font-medium text-foreground">手动复制内容</p>
+          <textarea
+            readOnly
+            value={buildClipboardPayload()}
+            className="min-h-40 w-full rounded-xl border border-border bg-background p-3 text-xs leading-relaxed text-foreground"
+            data-testid="textarea-xhs-manual-copy"
+            onFocus={(event) => event.currentTarget.select()}
+          />
         </div>
       )}
 
