@@ -17,6 +17,20 @@ import {
   viralWarningMessage,
   VIRAL_CUE_LABELS,
 } from "./viral-style";
+import {
+  applyScreenshotBodyOpening,
+  applyScreenshotTitleStyle,
+  applyScreenshotToCover,
+  applyScreenshotToPage,
+  buildAccentStickerLayer,
+  emptyScreenshotProfile,
+  SCREENSHOT_CUE_LABELS,
+  SCREENSHOT_MOOD_LABELS,
+  screenshotWarningMessage,
+  type ScreenshotCue,
+  type ScreenshotMood,
+  type ScreenshotStyleProfile,
+} from "./screenshot-style";
 
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
 
@@ -149,7 +163,34 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const viralWarning = viralWarningMessage(viralProfile);
   if (viralWarning) warnings.push(viralWarning);
 
-  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${Date.now()}|${Math.random()}`;
+  // Screenshot-derived style profile. When the user uploaded a target-note
+  // screenshot, the create-page analyzer wrote the learned cues into
+  // `input.screenshotRef`. We re-hydrate it into a full ScreenshotStyleProfile
+  // here so the same code path can be used for title / body / cover styling.
+  const screenshotProfile: ScreenshotStyleProfile = input.screenshotRef
+    ? {
+        hasInput: true,
+        previewUrl: input.screenshotRef.previewUrl,
+        filename: input.screenshotRef.filename,
+        width: input.screenshotRef.width,
+        height: input.screenshotRef.height,
+        palette: input.screenshotRef.palette,
+        accent: input.screenshotRef.accent,
+        brightness: input.screenshotRef.brightness,
+        saturation: input.screenshotRef.saturation,
+        contrast: input.screenshotRef.contrast,
+        warmth: input.screenshotRef.warmth,
+        textDensity: input.screenshotRef.textDensity,
+        edgeDensity: input.screenshotRef.edgeDensity,
+        mood: input.screenshotRef.mood as ScreenshotMood,
+        cues: input.screenshotRef.cues as ScreenshotCue[],
+        status: input.screenshotRef.status,
+      }
+    : emptyScreenshotProfile();
+  const screenshotWarning = screenshotWarningMessage(screenshotProfile);
+  if (screenshotWarning) warnings.push(screenshotWarning);
+
+  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.mood ?? ""}|${(input.screenshotRef?.cues ?? []).join(",")}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
 
   // 2) Title
@@ -163,7 +204,10 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const baseTitle = stripBanned(`${prefix}${subject}｜${suffix}`);
   // Bend the title toward the learned reference style (emoji / punctuation /
   // hook prefix). When no reference was provided, this is a no-op.
-  const title = applyTitleStyle(baseTitle, viralProfile);
+  const title = applyScreenshotTitleStyle(
+    applyTitleStyle(baseTitle, viralProfile),
+    screenshotProfile,
+  );
   const coverHeadlines = [
     `${subject}\n真的很会住!`,
     `这家酒店\n太适合收藏!`,
@@ -176,7 +220,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     stripBanned(`${city ? `${city}｜` : ""}${subject}｜${pick(style.titleSuffixes, seed + 13)}`),
     stripBanned(`${pick(style.titlePrefixes, seed + 17)}${subject}｜${pick(style.toneAdjectives, seed + 3)}到想再来一次`),
     stripBanned(`${subject}｜${pick(style.toneAdjectives, seed + 5)}入住,${pick(style.titleSuffixes, seed + 23)}`),
-  ].map((t) => applyTitleStyle(t, viralProfile));
+  ].map((t) => applyScreenshotTitleStyle(applyTitleStyle(t, viralProfile), screenshotProfile));
 
   // 3) Body — Xiaohongshu travel blogger voice.
   //    Structure: opening hook (not "这次来到..."), emoji-headed sections only
@@ -595,9 +639,12 @@ export function generateNote(input: AppInputState): GeneratedNote {
     `给嘴硬的我跪了，这家${tone}得有点上头。`,
     `没夸张，住进去那一刻心情就被${tone}拿捏了。`,
   ];
-  const opening = decorateBodyOpening(
-    stripBanned(pick(hookBank, seed + 31)),
-    viralProfile,
+  const opening = applyScreenshotBodyOpening(
+    decorateBodyOpening(
+      stripBanned(pick(hookBank, seed + 31)),
+      viralProfile,
+    ),
+    screenshotProfile,
   );
 
   // Optional context line (city / stay date / room type) — only if provided.
@@ -732,7 +779,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     : "酒店美好,一键记住";
 
   // Build editable cover with layer model
-  const cover = buildCoverDesign({
+  let cover = buildCoverDesign({
     styleKey: input.style,
     coverHeadline,
     coverSubline,
@@ -740,6 +787,16 @@ export function generateNote(input: AppInputState): GeneratedNote {
     coverImage,
     seed,
   });
+  // If the user uploaded a target-note screenshot, bend the cover's
+  // background gradient + text-layer styling + accent sticker toward the
+  // learned palette / mood. Visible in the editor, phone preview and export.
+  if (screenshotProfile.hasInput) {
+    cover = applyScreenshotToCover(cover, screenshotProfile, input.style);
+    const accent = buildAccentStickerLayer(screenshotProfile, seed);
+    if (accent) {
+      cover = { ...cover, layers: [...cover.layers, accent] };
+    }
+  }
 
   // No default stickers — cover and inner pages stay clean photo/design by
   // default. Users can pick from the preset sticker library in the editor.
@@ -752,12 +809,15 @@ export function generateNote(input: AppInputState): GeneratedNote {
     const img = page.imageId
       ? input.images.find((i) => i.id === page.imageId)
       : undefined;
-    pageDesigns[page.index] = buildScenePageDesign({
+    const base = buildScenePageDesign({
       styleKey: input.style,
       page,
       image: img,
       seed: seed + page.index,
     });
+    pageDesigns[page.index] = screenshotProfile.hasInput
+      ? applyScreenshotToPage(base, screenshotProfile, input.style)
+      : base;
   }
 
   return {
@@ -782,6 +842,16 @@ export function generateNote(input: AppInputState): GeneratedNote {
       isFallback: viralProfile.isFallback,
       isXhsLink: viralProfile.isXhsLink,
       extractedTitle: viralProfile.extractedTitle,
+    },
+    screenshotStyle: {
+      hasInput: screenshotProfile.hasInput,
+      mood: screenshotProfile.mood,
+      moodLabel: SCREENSHOT_MOOD_LABELS[screenshotProfile.mood] ?? "",
+      cues: screenshotProfile.cues,
+      cueLabels: screenshotProfile.cues.map((c) => SCREENSHOT_CUE_LABELS[c]),
+      palette: screenshotProfile.palette,
+      accent: screenshotProfile.accent,
+      status: screenshotProfile.status,
     },
   };
 }

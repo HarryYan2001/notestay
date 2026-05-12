@@ -13,6 +13,7 @@ import type {
   GeneratedNote,
   HotelInfo,
   InputMode,
+  ScreenshotRef,
   StyleKey,
   UploadedImage,
 } from "./types";
@@ -51,6 +52,7 @@ export const DEFAULT_INPUT: AppInputState = {
   style: "xhs_burst",
   viralRef: "",
   viralRefNotes: "",
+  screenshotRef: null,
 };
 
 interface AppCtx {
@@ -69,6 +71,10 @@ interface AppCtx {
   setImageCategory: (id: string, category: string) => void;
   setStyle: (s: StyleKey) => void;
   setViralRef: (s: string) => void;
+  // Set / clear the learned-style profile derived from the uploaded
+  // reference-note screenshot. The previous object URL (if any) is revoked
+  // automatically so we don't leak memory between uploads.
+  setScreenshotRef: (s: ScreenshotRef | null) => void;
   generated: GeneratedNote | null;
   setGenerated: (g: GeneratedNote | null) => void;
   // User-saved framework templates. Persisted to the URL alongside the
@@ -167,6 +173,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         })),
       setStyle: (st) => setState((s) => ({ ...s, style: st })),
       setViralRef: (v) => setState((s) => ({ ...s, viralRef: v })),
+      setScreenshotRef: (ref) =>
+        setState((s) => {
+          // Revoke the previous preview's object URL so we don't leak the
+          // bound Blob when the user replaces or clears their upload.
+          const prev = s.screenshotRef?.previewUrl;
+          if (prev && prev !== ref?.previewUrl && typeof URL !== "undefined") {
+            try {
+              URL.revokeObjectURL(prev);
+            } catch {
+              // ignore — revoke is best-effort
+            }
+          }
+          return { ...s, screenshotRef: ref };
+        }),
       generated,
       setGenerated,
       templates,

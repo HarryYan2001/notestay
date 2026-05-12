@@ -57,8 +57,39 @@ export interface AppInputState {
   hotel: HotelInfo;
   images: UploadedImage[];
   style: StyleKey;
+  // Legacy viral-link text field. Kept for back-compat with existing smoke
+  // fixtures (script/smoke-*). The UI no longer surfaces it — the 爆款笔记
+  // 学习 block uploads a screenshot now (see `screenshotRef`).
   viralRef: string;
   viralRefNotes: string;
+  // Optional reference-note screenshot the user uploaded so we can learn the
+  // visual / textual style of a target Xiaohongshu note. When present we
+  // bend title, body opening and page/cover designs toward the learned
+  // palette + mood + cues. Null when the user hasn't uploaded a screenshot.
+  screenshotRef: ScreenshotRef | null;
+}
+
+// Persisted screenshot reference. We only keep the *analysis result* in app
+// state — the raw File is consumed when the user picks the file and the
+// analyzer is the source of truth for downstream generation.
+export interface ScreenshotRef {
+  // Object URL for the uploaded screenshot, used for the preview thumbnail.
+  // Revoked when the user clears or replaces the screenshot.
+  previewUrl: string | null;
+  filename: string;
+  width: number;
+  height: number;
+  palette: [string, string, string];
+  accent: string;
+  brightness: number;
+  saturation: number;
+  contrast: number;
+  warmth: number;
+  textDensity: number;
+  edgeDensity: number;
+  mood: string;
+  cues: string[];
+  status: string;
 }
 
 export type CoverLayerType = "image" | "text";
@@ -155,6 +186,7 @@ export interface GeneratedNote {
   stickers: StickerOverlay[];               // each has pageIndex binding
   warnings: string[];
   viralStyle?: ViralStyleSummary;
+  screenshotStyle?: ScreenshotStyleSummary;
 }
 
 export interface ViralStyleSummary {
@@ -165,6 +197,17 @@ export interface ViralStyleSummary {
   isFallback: boolean;
   isXhsLink: boolean;
   extractedTitle: string | null;
+}
+
+export interface ScreenshotStyleSummary {
+  hasInput: boolean;
+  mood: string;
+  moodLabel: string;
+  cues: string[];
+  cueLabels: string[];
+  palette: [string, string, string];
+  accent: string;
+  status: string;
 }
 
 export interface PageLayout {

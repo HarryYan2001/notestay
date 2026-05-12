@@ -37,6 +37,7 @@ function baseInput(overrides: Partial<AppInputState> = {}): AppInputState {
     style: "korean_cream",
     viralRef: "",
     viralRefNotes: "",
+    screenshotRef: null,
     ...overrides,
   };
 }
