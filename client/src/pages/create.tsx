@@ -14,7 +14,13 @@ import {
   SCREENSHOT_CUE_LABELS,
   SCREENSHOT_MOOD_LABELS,
 } from "@/lib/screenshot-style";
-import type { InputMode, ScreenshotRef, UploadedImage } from "@/lib/types";
+import {
+  analyzeScreenshotText,
+  TEXT_CUE_LABELS,
+  TEXT_TONE_LABELS,
+} from "@/lib/screenshot-text-style";
+import { recognizeScreenshotText } from "@/lib/screenshot-ocr";
+import type { InputMode, ScreenshotRef, ScreenshotTextStyleRef, UploadedImage } from "@/lib/types";
 import {
   Plus,
   Trash2,
@@ -44,6 +50,11 @@ export default function CreatePage() {
   // True while we're decoding + analyzing the uploaded reference screenshot.
   // Surfaced as a spinner so the user knows the analyzer is running.
   const [analyzingScreenshot, setAnalyzingScreenshot] = useState(false);
+  // True while OCR is running on the uploaded screenshot. OCR is heavier than
+  // the pixel analyzer (we lazy-load tesseract.js + WASM + language data), so
+  // we expose it as a separate state and let the user see the visual analysis
+  // result first while text recognition continues in the background.
+  const [ocrRunning, setOcrRunning] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
 
   async function onPickScreenshot(file: File | null | undefined) {
@@ -54,9 +65,10 @@ export default function CreatePage() {
     }
     setScreenshotError(null);
     setAnalyzingScreenshot(true);
+    let visualRef: ScreenshotRef | null = null;
     try {
       const profile = await analyzeScreenshotFile(file);
-      const ref: ScreenshotRef = {
+      visualRef = {
         previewUrl: profile.previewUrl,
         filename: profile.filename,
         width: profile.width,
@@ -72,14 +84,51 @@ export default function CreatePage() {
         mood: profile.mood,
         cues: profile.cues,
         status: profile.status,
+        textStyle: null,
       };
-      app.setScreenshotRef(ref);
+      app.setScreenshotRef(visualRef);
     } catch (err) {
       console.warn("screenshot analysis failed", err);
       setScreenshotError("截图分析失败,请换一张图片再试。");
+      setAnalyzingScreenshot(false);
+      if (screenshotInputRef.current) screenshotInputRef.current.value = "";
+      return;
     } finally {
       setAnalyzingScreenshot(false);
       if (screenshotInputRef.current) screenshotInputRef.current.value = "";
+    }
+
+    // OCR pass — runs after the visual analyzer so the user sees a result
+    // immediately, then the textual cues attach when tesseract.js finishes.
+    if (!visualRef) return;
+    setOcrRunning(true);
+    try {
+      const ocr = await recognizeScreenshotText(file);
+      const textProfile = analyzeScreenshotText(ocr.text);
+      const trimmedPreview = ocr.text.replace(/\s+/g, " ").trim().slice(0, 240);
+      const textStyle: ScreenshotTextStyleRef = {
+        hasText: textProfile.hasText,
+        charCount: textProfile.charCount,
+        cjkCount: textProfile.cjkCount,
+        tone: textProfile.tone,
+        cues: textProfile.cues,
+        detectedEmoji: textProfile.detectedEmoji,
+        punctIntensity: textProfile.punctIntensity,
+        avgSentenceLen: textProfile.avgSentenceLen,
+        hashtagCount: textProfile.hashtagCount,
+        status: ocr.ok
+          ? textProfile.hasText
+            ? textProfile.status
+            : "OCR 已运行,但未识别到足够的中文文字,本次仅学习视觉风格。"
+          : "OCR 未能加载,本次仅学习视觉风格(图片像素的色彩 / 版式 / 对比度)。",
+        previewText: trimmedPreview,
+      };
+      app.setScreenshotRef({ ...visualRef, textStyle });
+    } catch (err) {
+      console.warn("OCR pipeline failed", err);
+      // Keep the visual-only ref — generation still works.
+    } finally {
+      setOcrRunning(false);
     }
   }
 
@@ -525,6 +574,7 @@ export default function CreatePage() {
                   onReplace={() => screenshotInputRef.current?.click()}
                   onClear={clearScreenshot}
                   busy={analyzingScreenshot}
+                  ocrRunning={ocrRunning}
                 />
               )}
               {screenshotError && (
@@ -537,8 +587,9 @@ export default function CreatePage() {
               )}
               <p className="mt-3 text-xs text-muted-foreground">
                 受小红书登录态和反爬规则限制,本应用不会去抓取链接。
-                我们会从你上传的截图像素中提取色彩、明暗、对比度与版式线索,
-                据此调整本次生成的标题情绪、正文开头节奏与封面 / 内页配色,
+                我们会从截图的像素中学习色彩、对比度与版式,
+                并通过浏览器内 OCR 学习其中文字的情绪、节奏与互动钩子,
+                据此调整本次生成的标题、正文开头与结尾,
                 <strong>不会复制原文与原图。</strong>
               </p>
             </Section>
@@ -734,15 +785,33 @@ function ScreenshotPanel({
   onReplace,
   onClear,
   busy,
+  ocrRunning,
 }: {
   refData: ScreenshotRef;
   onReplace: () => void;
   onClear: () => void;
   busy: boolean;
+  ocrRunning: boolean;
 }) {
+  const [showOcrText, setShowOcrText] = useState(false);
   const moodLabel =
     SCREENSHOT_MOOD_LABELS[refData.mood as keyof typeof SCREENSHOT_MOOD_LABELS] ??
     refData.mood;
+  const textStyle = refData.textStyle;
+  const textToneLabel = textStyle
+    ? TEXT_TONE_LABELS[textStyle.tone as keyof typeof TEXT_TONE_LABELS] ?? textStyle.tone
+    : null;
+  // Status copy for the OCR sub-panel.
+  let ocrStatus: string;
+  if (ocrRunning) {
+    ocrStatus = "正在识别截图中的文字…(首次需下载 OCR 引擎,可能需要数十秒)";
+  } else if (!textStyle) {
+    ocrStatus = "文字识别尚未开始或已被跳过。";
+  } else if (!textStyle.hasText) {
+    ocrStatus = textStyle.status;
+  } else {
+    ocrStatus = textStyle.status;
+  }
   return (
     <div className="space-y-3" data-testid="screenshot-learning-panel">
       <div className="flex gap-3 items-start">
@@ -825,6 +894,93 @@ function ScreenshotPanel({
             {refData.status}
           </p>
         </div>
+      </div>
+      {/* OCR / text-style learning sub-panel. Shows running state, learned
+          tone+cues, and an opt-in expandable preview of the recognized text
+          (purely informational — the generator never copies it). */}
+      <div
+        className="rounded-xl border border-dashed border-border bg-background/60 p-3 space-y-2"
+        data-testid="screenshot-text-learning-panel"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            文字风格学习 · OCR
+          </span>
+          {ocrRunning && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium"
+              data-testid="screenshot-text-learning-running"
+            >
+              <Loader2 className="size-3 animate-spin" /> 识别中
+            </span>
+          )}
+          {!ocrRunning && textStyle?.hasText && (
+            <span
+              className="inline-flex items-center rounded-full bg-foreground text-background px-2 py-0.5 text-[10px] font-semibold"
+              data-testid="screenshot-text-learning-tone"
+            >
+              {textToneLabel}
+            </span>
+          )}
+          {!ocrRunning && textStyle && !textStyle.hasText && (
+            <span
+              className="text-[10px] text-muted-foreground"
+              data-testid="screenshot-text-learning-empty"
+            >
+              未识别到足够文字
+            </span>
+          )}
+        </div>
+        {!ocrRunning && textStyle?.hasText && textStyle.cues.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-1"
+            data-testid="screenshot-text-learning-cues"
+          >
+            {textStyle.cues.map((cue) => (
+              <span
+                key={cue}
+                className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium border border-primary/30"
+                data-testid={`screenshot-text-cue-${cue}`}
+              >
+                {TEXT_CUE_LABELS[cue as keyof typeof TEXT_CUE_LABELS] ?? cue}
+              </span>
+            ))}
+          </div>
+        )}
+        <p
+          className="text-[10px] text-muted-foreground leading-relaxed"
+          data-testid="screenshot-text-learning-status"
+        >
+          {ocrStatus}
+        </p>
+        {textStyle?.hasText && textStyle.previewText && (
+          <div className="text-[10px]">
+            <button
+              type="button"
+              onClick={() => setShowOcrText((v) => !v)}
+              className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+              data-testid="button-toggle-ocr-preview"
+            >
+              <ChevronRight
+                className={`size-3 transition ${showOcrText ? "rotate-90" : ""}`}
+              />
+              {showOcrText ? "收起识别文字" : "查看识别到的文字片段"}
+            </button>
+            {showOcrText && (
+              <div
+                className="mt-1 rounded-lg border border-card-border bg-card/70 p-2 leading-relaxed"
+                data-testid="screenshot-text-learning-preview"
+              >
+                <p className="text-amber-700 dark:text-amber-300 mb-1">
+                  仅用于风格学习,不复制内容。
+                </p>
+                <p className="text-muted-foreground whitespace-pre-wrap break-words">
+                  {textStyle.previewText}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button

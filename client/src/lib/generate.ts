@@ -31,6 +31,18 @@ import {
   type ScreenshotMood,
   type ScreenshotStyleProfile,
 } from "./screenshot-style";
+import {
+  applyTextStyleToBodyOpening,
+  applyTextStyleToClosing,
+  applyTextStyleToTitle,
+  emptyTextProfile,
+  TEXT_CUE_LABELS,
+  TEXT_TONE_LABELS,
+  textStyleWarningMessage,
+  type ScreenshotTextStyleProfile,
+  type TextCue,
+  type TextTone,
+} from "./screenshot-text-style";
 
 const IMAGE_CATEGORIES = ["外观", "大堂", "房间", "床品", "浴室", "早餐", "夜景", "周边", "其他"];
 
@@ -190,7 +202,27 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const screenshotWarning = screenshotWarningMessage(screenshotProfile);
   if (screenshotWarning) warnings.push(screenshotWarning);
 
-  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.mood ?? ""}|${(input.screenshotRef?.cues ?? []).join(",")}|${Date.now()}|${Math.random()}`;
+  // Re-hydrate the OCR-derived text style profile from app state so the same
+  // pure decorators (applyTextStyleToTitle / ToBodyOpening / ToClosing) can
+  // be used here as in the smoke tests.
+  const textProfile: ScreenshotTextStyleProfile = input.screenshotRef?.textStyle?.hasText
+    ? {
+        hasText: true,
+        charCount: input.screenshotRef.textStyle.charCount,
+        cjkCount: input.screenshotRef.textStyle.cjkCount,
+        tone: input.screenshotRef.textStyle.tone as TextTone,
+        cues: input.screenshotRef.textStyle.cues as TextCue[],
+        detectedEmoji: input.screenshotRef.textStyle.detectedEmoji,
+        punctIntensity: input.screenshotRef.textStyle.punctIntensity,
+        avgSentenceLen: input.screenshotRef.textStyle.avgSentenceLen,
+        hashtagCount: input.screenshotRef.textStyle.hashtagCount,
+        status: input.screenshotRef.textStyle.status,
+      }
+    : emptyTextProfile();
+  const textWarning = textStyleWarningMessage(textProfile);
+  if (textWarning) warnings.push(textWarning);
+
+  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.mood ?? ""}|${(input.screenshotRef?.cues ?? []).join(",")}|${input.screenshotRef?.textStyle?.tone ?? ""}|${(input.screenshotRef?.textStyle?.cues ?? []).join(",")}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
 
   // 2) Title
@@ -203,10 +235,16 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const suffix = pick(style.titleSuffixes, seed + 7);
   const baseTitle = stripBanned(`${prefix}${subject}｜${suffix}`);
   // Bend the title toward the learned reference style (emoji / punctuation /
-  // hook prefix). When no reference was provided, this is a no-op.
-  const title = applyScreenshotTitleStyle(
-    applyTitleStyle(baseTitle, viralProfile),
-    screenshotProfile,
+  // hook prefix). When no reference was provided, this is a no-op. We layer
+  // the OCR-derived TEXT style on top of the visual decorators so the title
+  // picks up both the cover mood AND the reference note's textual rhythm
+  // (drama / 治愈 / 高级 / 口语) without ever copying source phrases.
+  const title = applyTextStyleToTitle(
+    applyScreenshotTitleStyle(
+      applyTitleStyle(baseTitle, viralProfile),
+      screenshotProfile,
+    ),
+    textProfile,
   );
   const coverHeadlines = [
     `${subject}\n真的很会住!`,
@@ -220,7 +258,12 @@ export function generateNote(input: AppInputState): GeneratedNote {
     stripBanned(`${city ? `${city}｜` : ""}${subject}｜${pick(style.titleSuffixes, seed + 13)}`),
     stripBanned(`${pick(style.titlePrefixes, seed + 17)}${subject}｜${pick(style.toneAdjectives, seed + 3)}到想再来一次`),
     stripBanned(`${subject}｜${pick(style.toneAdjectives, seed + 5)}入住,${pick(style.titleSuffixes, seed + 23)}`),
-  ].map((t) => applyScreenshotTitleStyle(applyTitleStyle(t, viralProfile), screenshotProfile));
+  ].map((t) =>
+    applyTextStyleToTitle(
+      applyScreenshotTitleStyle(applyTitleStyle(t, viralProfile), screenshotProfile),
+      textProfile,
+    ),
+  );
 
   // 3) Body — Xiaohongshu travel blogger voice.
   //    Structure: opening hook (not "这次来到..."), emoji-headed sections only
@@ -639,12 +682,15 @@ export function generateNote(input: AppInputState): GeneratedNote {
     `给嘴硬的我跪了，这家${tone}得有点上头。`,
     `没夸张，住进去那一刻心情就被${tone}拿捏了。`,
   ];
-  const opening = applyScreenshotBodyOpening(
-    decorateBodyOpening(
-      stripBanned(pick(hookBank, seed + 31)),
-      viralProfile,
+  const opening = applyTextStyleToBodyOpening(
+    applyScreenshotBodyOpening(
+      decorateBodyOpening(
+        stripBanned(pick(hookBank, seed + 31)),
+        viralProfile,
+      ),
+      screenshotProfile,
     ),
-    screenshotProfile,
+    textProfile,
   );
 
   // Optional context line (city / stay date / room type) — only if provided.
@@ -668,7 +714,10 @@ export function generateNote(input: AppInputState): GeneratedNote {
     `存这条，下次想给自己一个慢一点的周末就来。`,
     `如果你和我一样在意细节，把它加进愿望清单不亏。`,
   ];
-  const closing = stripBanned(pick(closingBank, seed + 41));
+  const closing = applyTextStyleToClosing(
+    stripBanned(pick(closingBank, seed + 41)),
+    textProfile,
+  );
 
   // Compose body. Drop sections one by one if we exceed 600 CJK chars.
   function compose(usedSections: Section[]): string {
@@ -852,6 +901,14 @@ export function generateNote(input: AppInputState): GeneratedNote {
       palette: screenshotProfile.palette,
       accent: screenshotProfile.accent,
       status: screenshotProfile.status,
+      text: {
+        hasText: textProfile.hasText,
+        tone: textProfile.tone,
+        toneLabel: TEXT_TONE_LABELS[textProfile.tone] ?? "",
+        cues: textProfile.cues,
+        cueLabels: textProfile.cues.map((c) => TEXT_CUE_LABELS[c]),
+        status: textProfile.status,
+      },
     },
   };
 }
