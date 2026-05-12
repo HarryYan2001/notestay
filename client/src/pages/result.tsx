@@ -21,8 +21,6 @@ import {
   ChevronLeft,
   AlertTriangle,
   Sparkles,
-  Download,
-  Loader2,
 } from "lucide-react";
 
 const EXPORT_WIDTH = 720; // px (3:4 aspect → 720x960)
@@ -330,43 +328,66 @@ export default function ResultPage() {
             <Block
               title="标题备选 & 文案复制"
               testId="block-text-actions"
-              subtitle="标题与正文请直接在左侧手机预览中编辑;此处提供当前标题与备选标题,可一键复用。"
+              subtitle="标题与正文请直接在左侧手机预览中编辑;此处列出最初生成的原始标题与备选标题,改过之后随时可一键切回。"
             >
               <div className="space-y-2">
-                <div
-                  className="text-sm flex items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-1.5"
-                  data-testid="text-current-title"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">当前</span>
-                    <span className="text-foreground">{note.title}</span>
-                  </div>
-                  <span className="text-[11px] text-muted-foreground">使用中</span>
-                </div>
-                {note.altTitles.map((t, i) => {
-                  const isCurrent = t === note.title;
-                  return (
-                    <div
-                      key={i}
-                      className="text-sm text-muted-foreground flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-1.5"
-                      data-testid={`text-alt-title-${i}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] uppercase tracking-wider">备选 {i + 1}</span>
-                        <span>{t}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => updateNote({ title: t })}
-                        disabled={isCurrent}
-                        className="text-[11px] rounded-full border border-border px-2 py-0.5 hover-elevate disabled:opacity-50 disabled:cursor-not-allowed"
-                        data-testid={`button-apply-alt-title-${i}`}
+                {(() => {
+                  const original = note.originalTitle;
+                  const altList = note.altTitles;
+                  const showOriginal = Boolean(original) && !altList.includes(original);
+                  const entries: { key: string; label: string; text: string; testId: string }[] = [];
+                  if (showOriginal) {
+                    entries.push({
+                      key: "original",
+                      label: "初始生成",
+                      text: original,
+                      testId: "text-original-title",
+                    });
+                  }
+                  altList.forEach((t, i) => {
+                    entries.push({
+                      key: `alt-${i}`,
+                      label: `备选 ${i + 1}`,
+                      text: t,
+                      testId: `text-alt-title-${i}`,
+                    });
+                  });
+                  if (entries.length === 0) {
+                    return (
+                      <p className="text-xs text-muted-foreground" data-testid="text-no-alt-titles">
+                        当前没有备选标题。
+                      </p>
+                    );
+                  }
+                  return entries.map((entry, i) => {
+                    const isCurrent = entry.text === note.title;
+                    const applyTestId =
+                      entry.key === "original"
+                        ? "button-apply-original-title"
+                        : `button-apply-alt-title-${i - (showOriginal ? 1 : 0)}`;
+                    return (
+                      <div
+                        key={entry.key}
+                        className="text-sm text-muted-foreground flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-1.5"
+                        data-testid={entry.testId}
                       >
-                        {isCurrent ? "已使用" : "用这个"}
-                      </button>
-                    </div>
-                  );
-                })}
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] uppercase tracking-wider">{entry.label}</span>
+                          <span>{entry.text}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => updateNote({ title: entry.text })}
+                          disabled={isCurrent}
+                          className="text-[11px] rounded-full border border-border px-2 py-0.5 hover-elevate disabled:opacity-50 disabled:cursor-not-allowed"
+                          data-testid={applyTestId}
+                        >
+                          {isCurrent ? "已使用" : "用这个"}
+                        </button>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <CopyBtn
@@ -408,60 +429,12 @@ export default function ResultPage() {
               </div>
             </Block>
 
-            {/* Download all pages */}
-            <Block
-              title="下载编辑后的图片"
-              testId="block-download-pages"
-              subtitle="一键将所有页面(含贴纸)导出为 PNG,可整包下载或逐张下载到本地,再上传到小红书。"
-            >
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleDownloadAll("zip")}
-                  disabled={exportState === "running"}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium disabled:opacity-60"
-                  data-testid="button-download-all-zip"
-                >
-                  {exportState === "running" ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : exportState === "done" ? (
-                    <Check className="size-4" />
-                  ) : (
-                    <Download className="size-4" />
-                  )}
-                  {exportState === "running"
-                    ? "正在打包…"
-                    : exportState === "done"
-                    ? "已开始下载"
-                    : "一键打包下载(ZIP)"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDownloadAll("individual")}
-                  disabled={exportState === "running"}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-card text-sm hover-elevate disabled:opacity-60"
-                  data-testid="button-download-all-individual"
-                >
-                  <Download className="size-4" /> 逐张下载 PNG
-                </button>
-              </div>
-              {exportError && (
-                <div className="mt-2 text-xs text-amber-700 dark:text-amber-300" data-testid="export-error">
-                  <AlertTriangle className="size-3.5 inline mr-1" />
-                  {exportError}
-                </div>
-              )}
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                由于浏览器安全策略,无法直接选择文件夹保存。我们会调用浏览器的下载机制,
-                文件会进入你的「下载」目录(可在浏览器设置中修改默认下载位置)。
-              </p>
-            </Block>
-
-            {/* One-click xhs import */}
+            {/* One-click xhs import (image export now lives inside this block) */}
             <XhsImport
               note={note}
               onDownloadAllZip={() => handleDownloadAll("zip")}
               downloading={exportState === "running"}
+              exportError={exportError}
             />
 
             {/* Comment seeds */}

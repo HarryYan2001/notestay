@@ -314,6 +314,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   return {
     styleKey: input.style,
     title,
+    originalTitle: title,
     altTitles,
     body,
     tags,

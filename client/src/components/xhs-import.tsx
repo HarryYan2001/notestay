@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { GeneratedNote } from "@/lib/types";
-import { Check, ExternalLink, Copy, Info, AlertTriangle, Download, Loader2 } from "lucide-react";
+import { Check, ExternalLink, Info, AlertTriangle, Download, Loader2 } from "lucide-react";
 
 const XHS_CREATOR_URL = "https://creator.xiaohongshu.com/publish/publish?source=web";
 
@@ -8,9 +8,10 @@ interface Props {
   note: GeneratedNote;
   onDownloadAllZip?: () => void | Promise<void>;
   downloading?: boolean;
+  exportError?: string | null;
 }
 
-export function XhsImport({ note, onDownloadAllZip, downloading }: Props) {
+export function XhsImport({ note, onDownloadAllZip, downloading, exportError }: Props) {
   const [status, setStatus] = useState<"idle" | "copying" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [showManualCopy, setShowManualCopy] = useState(false);
@@ -37,7 +38,6 @@ export function XhsImport({ note, onDownloadAllZip, downloading }: Props) {
         await navigator.clipboard.writeText(payload);
         copied = true;
       } else {
-        // legacy fallback
         const ta = document.createElement("textarea");
         ta.value = payload;
         ta.style.position = "fixed";
@@ -80,13 +80,13 @@ export function XhsImport({ note, onDownloadAllZip, downloading }: Props) {
       setError(
         opened
           ? "已尝试打开小红书发布页,但浏览器没有允许自动复制。请使用下方文本框手动复制后粘贴。"
-          : "浏览器拦截了新标签页,也没有允许自动复制。请使用下方文本框手动复制,并点击「仅打开小红书发布页」。",
+          : "浏览器拦截了新标签页,也没有允许自动复制。请使用下方文本框手动复制,并自行打开小红书发布页。",
       );
       return;
     }
 
     if (!opened) {
-      setError("文案已复制,但浏览器拦截了新标签页。请点击「仅打开小红书发布页」继续。");
+      setError("文案已复制,但浏览器拦截了新标签页。请手动打开小红书创作中心粘贴。");
     }
     setStatus("done");
   }
@@ -138,48 +138,12 @@ export function XhsImport({ note, onDownloadAllZip, downloading }: Props) {
           )}
           {status === "done" ? "已复制 · 已打开小红书" : "一键导入小红书"}
         </button>
-        <a
-          href={XHS_CREATOR_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-card text-sm hover-elevate"
-          data-testid="link-xhs-creator"
-        >
-          <ExternalLink className="size-4" /> 仅打开小红书发布页
-        </a>
-        <button
-          type="button"
-          onClick={async () => {
-            setError(null);
-            setShowManualCopy(false);
-            const payload = buildClipboardPayload();
-            try {
-              const copied = await copyPayload(payload);
-              if (copied) {
-                setStatus("done");
-              } else {
-                setShowManualCopy(true);
-                setStatus("error");
-                setError("浏览器没有允许自动复制。请使用下方文本框手动复制。");
-              }
-            } catch {
-              setShowManualCopy(true);
-              setStatus("error");
-              setError("浏览器没有允许自动复制。请使用下方文本框手动复制。");
-            }
-          }}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-card text-sm hover-elevate"
-          data-testid="button-xhs-copy"
-        >
-          <Copy className="size-4" /> 仅复制文案
-        </button>
       </div>
 
       {status === "done" && !error && (
         <div className="flex items-start gap-2 text-xs text-emerald-700 dark:text-emerald-300" data-testid="xhs-status-ok">
           <Check className="size-4 mt-0.5 shrink-0" />
-          已复制标题、正文和标签到剪贴板。请到小红书创作中心粘贴。
-          图片请使用「图片上传」页中的实拍照片(或封面下方下载按钮导出封面)再上传到小红书。
+          已复制标题、正文和标签到剪贴板。请到小红书创作中心粘贴并上传刚导出的图片。
         </div>
       )}
 
@@ -187,6 +151,13 @@ export function XhsImport({ note, onDownloadAllZip, downloading }: Props) {
         <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300" data-testid="xhs-status-error">
           <AlertTriangle className="size-4 mt-0.5 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {exportError && (
+        <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300" data-testid="xhs-export-error">
+          <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+          {exportError}
         </div>
       )}
 

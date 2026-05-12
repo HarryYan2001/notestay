@@ -138,6 +138,10 @@ export interface StickerOverlay {
 export interface GeneratedNote {
   styleKey: StyleKey;
   title: string;
+  // The title produced by the initial generation pass. Preserved verbatim so
+  // the user can always revert from an inline-edited or alt-applied title back
+  // to the originally generated one.
+  originalTitle: string;
   altTitles: string[];
   body: string;        // markdown-ish, paragraphs separated by \n\n
   tags: string[];
