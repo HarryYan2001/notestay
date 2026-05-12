@@ -218,7 +218,117 @@ export function generateNote(input: AppInputState): GeneratedNote {
     "补充",
   ]);
 
+  // Set of standard SECTION_BANK labels for quick lookup.
+  const STANDARD_LABELS = new Set(SECTION_BANK.map((s) => s.label));
+
   type Section = { emoji: string; label: string; text: string };
+
+  // Second-pass review / reclassification (复核机制).
+  // After sections are assembled, split each section's body into fragments and
+  // reclassify each fragment by dimension keyword. If a fragment clearly belongs
+  // to a different dimension than the section it landed in, move it. We only
+  // move when there is a better, more-specific match — fragments that don't
+  // match any dimension stay where they were. User-provided custom sections
+  // are preserved unless a fragment clearly fits a standard dimension better.
+  function reviewAndReassign(secs: Section[]) {
+    if (secs.length === 0) return;
+
+    // Split a section text into fragments on sentence-ending punctuation,
+    // preserving the punctuation with the fragment that precedes it.
+    function splitFragments(text: string): string[] {
+      const out: string[] = [];
+      let buf = "";
+      for (const ch of text) {
+        buf += ch;
+        if (/[。！？!?…]/.test(ch)) {
+          const t = buf.trim();
+          if (t) out.push(t);
+          buf = "";
+        }
+      }
+      const tail = buf.trim();
+      if (tail) out.push(tail);
+      return out;
+    }
+
+    // Bucket of fragments by destination key. Keys are either standard
+    // SECTION_BANK labels, or "__keep__:<sectionIndex>" for fragments staying
+    // in their original (custom or leftover) section.
+    const movedTo = new Map<string, string[]>();
+    const keptBySection = new Map<number, string[]>();
+
+    const isStandardSection = (label: string) => STANDARD_LABELS.has(label);
+
+    secs.forEach((sec, idx) => {
+      const fragments = splitFragments(sec.text);
+      for (const frag of fragments) {
+        const matched = pickSection("", frag);
+        const current = sec.label;
+        // Decide whether to move.
+        let moveTo: { label: string; emoji: string } | null = null;
+        if (matched && matched.label !== current) {
+          if (isStandardSection(current)) {
+            // Standard section -> different standard section: move.
+            moveTo = { label: matched.label, emoji: matched.emoji };
+          } else if (current === "记一笔") {
+            // Leftover bucket: any standard match wins.
+            moveTo = { label: matched.label, emoji: matched.emoji };
+          } else {
+            // Custom user-provided dimension: only move if the fragment
+            // matches a different standard dimension AND the custom label
+            // itself is NOT a recognizable dimension keyword for the fragment.
+            // Example: a custom "服务" with a breakfast sentence -> move.
+            // But a custom "露台" with a sentence containing 露台 stays put
+            // (it'll match 露台 in SECTION_BANK and equal `current`).
+            moveTo = { label: matched.label, emoji: matched.emoji };
+          }
+        }
+        if (moveTo) {
+          const arr = movedTo.get(moveTo.label) ?? [];
+          arr.push(frag);
+          movedTo.set(moveTo.label, arr);
+        } else {
+          const arr = keptBySection.get(idx) ?? [];
+          arr.push(frag);
+          keptBySection.set(idx, arr);
+        }
+      }
+    });
+
+    // Rebuild sections. Order:
+    //   1) Original sections (in original order) with their kept fragments,
+    //      merged with any moved-in fragments destined for that label.
+    //      Drop sections that end up empty.
+    //   2) Newly created standard sections for moved fragments whose target
+    //      label didn't exist in `secs` — in SECTION_BANK order.
+    const handledLabels = new Set<string>();
+    const rebuilt: Section[] = [];
+    secs.forEach((sec, idx) => {
+      const kept = keptBySection.get(idx) ?? [];
+      const moved = movedTo.get(sec.label) ?? [];
+      handledLabels.add(sec.label);
+      const combined = [...kept, ...moved];
+      if (combined.length === 0) return;
+      rebuilt.push({
+        emoji: sec.emoji,
+        label: sec.label,
+        text: naturalizeUserLine(combined.join("")),
+      });
+    });
+    for (const bankEntry of SECTION_BANK) {
+      if (handledLabels.has(bankEntry.label)) continue;
+      const moved = movedTo.get(bankEntry.label);
+      if (!moved || moved.length === 0) continue;
+      rebuilt.push({
+        emoji: bankEntry.emoji,
+        label: bankEntry.label,
+        text: naturalizeUserLine(moved.join("")),
+      });
+    }
+    secs.length = 0;
+    secs.push(...rebuilt);
+  }
+
   const sections: Section[] = [];
 
   if (input.inputMode === "framework") {
@@ -259,6 +369,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
         text: naturalizeUserLine(entry.parts.join("。")),
       });
     }
+    reviewAndReassign(sections);
   } else if (freeText) {
     // Split free text into chunks and route each chunk to the best-matching section.
     const chunks = stripBanned(freeText)
@@ -286,6 +397,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     if (leftovers.length) {
       sections.push({ emoji: "📝", label: "记一笔", text: naturalizeUserLine(leftovers.join("")) });
     }
+    reviewAndReassign(sections);
   }
 
   // Opening hook — name the core feeling, do NOT start with "这次来到...".
