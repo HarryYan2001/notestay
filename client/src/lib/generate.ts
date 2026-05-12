@@ -68,11 +68,19 @@ function stripBanned(text: string): string {
   for (const p of BANNED_PHRASES) {
     out = out.split(p).join("");
   }
-  // Clean up artifacts that can appear after deletions: leading punctuation, double commas.
-  // Note: only collapse horizontal whitespace — newlines are structural.
+  // Clean up artifacts that can appear after deletions:
+  //   - orphan / duplicated sentence-ending punctuation (incl. ones separated by whitespace)
+  //   - leading punctuation on a line
+  //   - excess horizontal whitespace
+  // Newlines are structural and must be preserved.
   out = out
-    .replace(/[,，、](?=[,，、。!?！？])/g, "")
-    .replace(/^[,，、。!?！？ \t]+/, "")
+    // Drop comma-then-punctuation runs: "，。" → "。"
+    .replace(/[,，、](?=[ \t]*[,，、。!?！？])/g, "")
+    // Collapse runs of the same/different sentence-end punctuation, possibly spaced.
+    // e.g. "。。" → "。", "。 。" → "。", "！。" → "！".
+    .replace(/([。!?！？])(?:[ \t]*[。!?！？])+/g, "$1")
+    // Strip leading punctuation / whitespace at the start of each line.
+    .replace(/(^|\n)[,，、。!?！？ \t]+/g, "$1")
     .replace(/[ \t]{2,}/g, " ");
   return out;
 }
@@ -161,20 +169,30 @@ export function generateNote(input: AppInputState): GeneratedNote {
 
   // Section heading bank — emoji + Chinese label. We only render the ones
   // the user actually mentioned, in this order.
+  // Sections are matched in this order. Breakfast comes before service so that
+  // a chunk like "早餐种类不多，但咖啡还可以" doesn't get routed to 服务 just
+  // because the user happened to label the framework slot "服务".
   const SECTION_BANK: { keys: string[]; emoji: string; label: string }[] = [
     { keys: ["位置", "地段", "交通", "周边", "出行"], emoji: "📍", label: "位置" },
     { keys: ["第一印象", "印象", "门面", "外观", "大堂", "lobby"], emoji: "✨", label: "第一印象" },
+    { keys: ["早餐", "餐食", "咖啡", "buffet", "自助餐"], emoji: "🍳", label: "早餐" },
     { keys: ["房间", "房型", "空间", "床", "床品", "卫浴", "浴室"], emoji: "🛏️", label: "房间" },
     { keys: ["服务", "前台", "礼宾", "管家", "态度"], emoji: "🛎️", label: "服务" },
-    { keys: ["早餐", "餐食", "buffet", "自助餐"], emoji: "🍳", label: "早餐" },
     { keys: ["设施", "泳池", "健身", "spa", "酒吧", "lounge"], emoji: "🏊", label: "设施" },
     { keys: ["夜景", "view", "景观", "落地窗"], emoji: "🌃", label: "景观" },
   ];
 
+  // Match on the value first (it carries the actual content). Only fall back
+  // to the framework label when the value gives no signal — otherwise a slot
+  // labeled "服务" with breakfast content would be misrouted.
   function pickSection(label: string, value: string) {
-    const lower = (label + " " + value).toLowerCase();
+    const valLower = value.toLowerCase();
     for (const s of SECTION_BANK) {
-      if (s.keys.some((k) => lower.includes(k.toLowerCase()))) return s;
+      if (s.keys.some((k) => valLower.includes(k.toLowerCase()))) return s;
+    }
+    const labLower = label.toLowerCase();
+    for (const s of SECTION_BANK) {
+      if (s.keys.some((k) => labLower.includes(k.toLowerCase()))) return s;
     }
     return null;
   }
