@@ -247,8 +247,54 @@ export interface ZhipuRawChoice {
 }
 
 export interface ZhipuRawResponse {
-  choices?: ZhipuRawChoice[];
+  choices?: any[];
   error?: { message?: string } | string;
+}
+
+// Mirror of api/generate-note.ts:extractZhipuContent. See that file for
+// the catalog of upstream shapes we accept. Kept in sync deliberately:
+// the Vercel handler is fully self-contained, so this copy serves the
+// Express dev server (server/routes.ts) and any offline smoke tests.
+export function extractZhipuContent(json: ZhipuRawResponse): string | null {
+  const choice = (json.choices as any)?.[0];
+  if (!choice || typeof choice !== "object") return null;
+  const msg = (choice as any).message;
+  if (msg && typeof msg === "object") {
+    if (typeof msg.content === "string" && msg.content.trim()) {
+      return msg.content;
+    }
+    if (Array.isArray(msg.content)) {
+      const parts: string[] = [];
+      for (const part of msg.content) {
+        if (typeof part === "string" && part.trim()) {
+          parts.push(part);
+        } else if (part && typeof part === "object") {
+          const p: any = part;
+          if (typeof p.text === "string" && p.text.trim()) parts.push(p.text);
+          else if (typeof p.content === "string" && p.content.trim()) parts.push(p.content);
+        }
+      }
+      const joined = parts.join("").trim();
+      if (joined) return joined;
+    }
+    if (typeof msg.reasoning_content === "string" && msg.reasoning_content.trim()) {
+      return msg.reasoning_content;
+    }
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        const args = tc?.function?.arguments;
+        if (typeof args === "string" && args.trim()) return args;
+      }
+    }
+  }
+  const delta = (choice as any).delta;
+  if (delta && typeof delta.content === "string" && delta.content.trim()) {
+    return delta.content;
+  }
+  if (typeof (choice as any).text === "string" && (choice as any).text.trim()) {
+    return (choice as any).text;
+  }
+  return null;
 }
 
 export const ZHIPU_DEFAULT_TIMEOUT_MS = 55_000;
@@ -312,9 +358,24 @@ export async function callZhipu(
         ? json.error.message
         : null;
     if (errMsg) throw new Error(`Zhipu API error: ${errMsg}`);
-    const content = json.choices?.[0]?.message?.content;
-    if (!content || typeof content !== "string") {
-      throw new Error("Zhipu API 返回中没有可用的 message.content。");
+    const content = extractZhipuContent(json);
+    if (!content) {
+      const choice0 = (json.choices as any)?.[0];
+      const diag = {
+        topKeys: Object.keys(json || {}),
+        choiceKeys: choice0 && typeof choice0 === "object" ? Object.keys(choice0) : [],
+        messageKeys:
+          choice0 && typeof (choice0 as any).message === "object"
+            ? Object.keys((choice0 as any).message)
+            : [],
+        finishReason:
+          (choice0 && (choice0 as any).finish_reason) ||
+          (choice0 && (choice0 as any).finishReason) ||
+          null,
+      };
+      throw new Error(
+        `Zhipu API 返回中没有可用的 message.content。诊断: ${JSON.stringify(diag).slice(0, 300)}`,
+      );
     }
     return content;
   } finally {

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useLocation } from "wouter";
 import { AppShell } from "@/components/app-shell";
@@ -1026,6 +1026,28 @@ function GenerateOverlay({ step }: { step: number }) {
     { name: "视觉优化 Agent", desc: "按图片类别选主图,用黄金分割优化封面视觉重点" },
     { name: "正文撰写 Agent · 智谱大模型", desc: "调用 AI 生成标题、正文、标签与评论引导" },
   ];
+  // The 3rd step is the long upstream Zhipu call. While we wait for it,
+  // creep the progress from the "step 3 starts" mark (~66%) toward 95% so
+  // the bar feels alive instead of frozen — capped under 100% so the
+  // completion frame still feels like a real finish.
+  const baseByStep: Record<number, number> = { 0: 0, 1: 8, 2: 38, 3: 66 };
+  const target = baseByStep[Math.max(0, Math.min(3, step))] ?? 0;
+  const [progress, setProgress] = useState(target);
+  useEffect(() => {
+    setProgress((prev) => Math.max(prev, target));
+  }, [target]);
+  useEffect(() => {
+    if (step !== 3) return;
+    const id = window.setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 95) return prev;
+        const remaining = 95 - prev;
+        return prev + Math.max(0.4, remaining * 0.04);
+      });
+    }, 320);
+    return () => window.clearInterval(id);
+  }, [step]);
+  const pct = Math.min(95, Math.max(0, progress));
   return (
     <div
       className="fixed inset-0 z-50 bg-background/85 backdrop-blur-xl flex items-center justify-center p-6"
@@ -1042,7 +1064,33 @@ function GenerateOverlay({ step }: { step: number }) {
             正文由智谱 AI 实时生成，封面与版式仍由本地视觉优化器排版。
           </p>
         </div>
-        <ol className="mt-8 space-y-3">
+        <div className="mt-6" data-testid="generate-progress">
+          <div className="flex items-center justify-between text-[11px] font-medium">
+            <span className="text-muted-foreground">
+              Step {Math.max(1, Math.min(3, step || 1))} / 3
+            </span>
+            <span
+              className="tabular-nums text-primary"
+              data-testid="generate-progress-pct"
+            >
+              {Math.round(pct)}%
+            </span>
+          </div>
+          <div
+            className="mt-2 h-2 w-full overflow-hidden rounded-full bg-primary/10 ring-1 ring-primary/15"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(pct)}
+            aria-label="生成进度"
+          >
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-primary/70 via-primary to-primary/80 shadow-[0_0_12px_hsl(var(--primary)/0.45)] transition-[width] duration-500 ease-out"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+        <ol className="mt-6 space-y-3">
           {steps.map((s, i) => {
             const idx = i + 1;
             const done = step > idx;

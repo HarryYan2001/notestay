@@ -23,6 +23,7 @@ import handler, {
   buildAllowedOrigins,
   resolveAllowedOrigin,
   DEFAULT_ALLOWED_ORIGINS,
+  extractZhipuContent,
   type VercelLikeRequest,
   type VercelLikeResponse,
 } from "../api/generate-note";
@@ -376,6 +377,170 @@ async function run() {
       !/signal is aborted/i.test(res.body?.error || ""),
       "raw 'signal is aborted' must NOT leak into the error message",
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.ZHIPU_API_KEY;
+  }
+
+  // ------------------------------------------------------------------
+  // extractZhipuContent: accept every upstream shape we know about, and
+  // explicitly fail on a shape with no content at all.
+  // ------------------------------------------------------------------
+  console.log("--- extractZhipuContent: canonical message.content string ---");
+  assert(
+    extractZhipuContent({
+      choices: [{ message: { content: "hello" } }],
+    }) === "hello",
+    "canonical string content extracted",
+  );
+
+  console.log("--- extractZhipuContent: structured content parts (array) ---");
+  assert(
+    extractZhipuContent({
+      choices: [
+        {
+          message: {
+            content: [
+              { type: "text", text: "{" },
+              { type: "text", text: '"title":"x"}' },
+            ],
+          } as any,
+        },
+      ],
+    }) === '{"title":"x"}',
+    "array content parts concatenated",
+  );
+
+  console.log("--- extractZhipuContent: reasoning_content fallback ---");
+  assert(
+    extractZhipuContent({
+      choices: [
+        {
+          message: {
+            content: "",
+            reasoning_content: '{"title":"y"}',
+          } as any,
+        },
+      ],
+    }) === '{"title":"y"}',
+    "reasoning_content used when content empty",
+  );
+
+  console.log("--- extractZhipuContent: tool_calls arguments ---");
+  assert(
+    extractZhipuContent({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                function: { name: "respond", arguments: '{"title":"z"}' },
+              },
+            ],
+          } as any,
+        },
+      ],
+    }) === '{"title":"z"}',
+    "tool_call arguments used when content null",
+  );
+
+  console.log("--- extractZhipuContent: streaming delta.content fallback ---");
+  assert(
+    extractZhipuContent({
+      choices: [{ delta: { content: "streamed" } } as any],
+    }) === "streamed",
+    "delta.content used when message missing",
+  );
+
+  console.log("--- extractZhipuContent: legacy text completion ---");
+  assert(
+    extractZhipuContent({
+      choices: [{ text: "legacy" } as any],
+    }) === "legacy",
+    "legacy choices[0].text used as last resort",
+  );
+
+  console.log("--- extractZhipuContent: truly empty payload → null ---");
+  assert(extractZhipuContent({} as any) === null, "no choices → null");
+  assert(
+    extractZhipuContent({ choices: [{ message: { content: "" } }] }) === null,
+    "empty-string content → null (so handler raises diagnostic)",
+  );
+
+  // ------------------------------------------------------------------
+  // Branch: handler must succeed when upstream uses the tool_calls shape
+  // (the shape that GitHub Pages users were intermittently hitting). This
+  // is the regression PR #34 fixes — before, this returned a 502 with
+  // "Zhipu API 返回中没有可用的 message.content".
+  // ------------------------------------------------------------------
+  console.log("--- handler: tool_calls upstream shape returns 200 ---");
+  process.env.ZHIPU_API_KEY = "dummy-key-for-test";
+  try {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    function: {
+                      name: "respond",
+                      arguments: JSON.stringify({
+                        title: "标题 via tool_call",
+                        altTitles: ["备 1"],
+                        body: "正文。\n\n📍 位置\n市中心。",
+                        hashtags: ["#上海酒店"],
+                        commentGuide: ["问 1"],
+                        warnings: [],
+                      }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as any;
+    const res = mockRes();
+    await handler(mockReq({ body: validPayload }), res);
+    assert(
+      res.statusCode === 200,
+      `tool_calls shape must succeed (got ${res.statusCode}: ${JSON.stringify(res.body)})`,
+    );
+    assert(res.body?.title === "标题 via tool_call", "title roundtrips from tool_call args");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.ZHIPU_API_KEY;
+  }
+
+  // ------------------------------------------------------------------
+  // Branch: truly empty upstream content → 502 with a diagnostic blob
+  // that lists the keys we saw (but NEVER leaks the API key / request).
+  // ------------------------------------------------------------------
+  console.log("--- handler: empty content payload returns diagnostic 502 ---");
+  process.env.ZHIPU_API_KEY = "dummy-key-for-test";
+  try {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          id: "abc",
+          choices: [{ finish_reason: "length", message: { content: "" } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as any;
+    const res = mockRes();
+    await handler(mockReq({ body: validPayload }), res);
+    assert(res.statusCode === 502, `empty content must be 502, got ${res.statusCode}`);
+    const err = String(res.body?.error || "");
+    assert(/没有可用的 message\.content/.test(err), "error message preserved");
+    assert(/诊断/.test(err), "diagnostic blob included");
+    assert(/finishReason/.test(err), "finishReason included in diagnostic");
+    assert(!/dummy-key-for-test/.test(err), "API key MUST NOT leak into error");
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.ZHIPU_API_KEY;
