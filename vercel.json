@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist/public",
+  "framework": null,
+  "functions": {
+    "api/generate-note.ts": {
+      "maxDuration": 60
+    }
+  }
+}
