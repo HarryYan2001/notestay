@@ -71,9 +71,11 @@ export interface AppInputState {
   viralRef: string;
   viralRefNotes: string;
   // Optional reference-note screenshot the user uploaded so we can learn the
-  // visual / textual style of a target Xiaohongshu note. When present we
-  // bend title, body opening and page/cover designs toward the learned
-  // palette + mood + cues. Null when the user hasn't uploaded a screenshot.
+  // TEXTUAL style of a target Xiaohongshu note via OCR. When present, we
+  // bend the generated title, body opening, body sections and closing
+  // toward the learned tone / rhythm / vocative / CTA pattern — without
+  // ever copying the source phrasing. Visual / image-style learning has
+  // been removed entirely. Null when the user hasn't uploaded a screenshot.
   screenshotRef: ScreenshotRef | null;
   // How aggressively to imitate the OCR-learned text style. Defaults to
   // "medium" so existing flows and smoke fixtures keep their PR #23 behavior.
@@ -81,27 +83,19 @@ export interface AppInputState {
   textStyleStrength?: TextStyleStrength;
 }
 
-// Persisted screenshot reference. We only keep the *analysis result* in app
-// state — the raw File is consumed when the user picks the file and the
-// analyzer is the source of truth for downstream generation.
+// Persisted screenshot reference. We only keep the *OCR-derived text style*
+// in app state — the raw File is consumed when the user picks the file and
+// the OCR + analyzer are the source of truth for downstream generation.
+//
+// Visual / image-style learning has been removed in this PR. The user
+// explicitly requested that the uploaded screenshot only learn the body
+// text style. Fields here are limited to the preview thumbnail + the OCR
+// text style result.
 export interface ScreenshotRef {
   // Object URL for the uploaded screenshot, used for the preview thumbnail.
   // Revoked when the user clears or replaces the screenshot.
   previewUrl: string | null;
   filename: string;
-  width: number;
-  height: number;
-  palette: [string, string, string];
-  accent: string;
-  brightness: number;
-  saturation: number;
-  contrast: number;
-  warmth: number;
-  textDensity: number;
-  edgeDensity: number;
-  mood: string;
-  cues: string[];
-  status: string;
   // Text style learned from OCR-extracted text inside the screenshot. Null
   // when OCR was skipped, failed, or produced too-little text to analyze.
   textStyle: ScreenshotTextStyleRef | null;
@@ -235,13 +229,10 @@ export interface ViralStyleSummary {
 }
 
 export interface ScreenshotStyleSummary {
+  // True when the user uploaded any screenshot at all. Independent of
+  // whether OCR succeeded — see `text.hasText` for that. Visual cues are
+  // no longer learned from screenshots.
   hasInput: boolean;
-  mood: string;
-  moodLabel: string;
-  cues: string[];
-  cueLabels: string[];
-  palette: [string, string, string];
-  accent: string;
   status: string;
   // Textual style learned from the OCR'd screenshot text. Only populated when
   // OCR returned a usable Chinese payload. Always object-shaped for callers

@@ -202,23 +202,10 @@ function makeRef(ocr: string): ScreenshotRef {
     status: t.status,
     previewText: ocr.replace(/\s+/g, " ").trim().slice(0, 240),
   };
-  // Use placeholder visual fields — we only care about textStyle here.
+  // Visual fields were removed — only the OCR-derived textStyle remains.
   return {
     previewUrl: null,
     filename: "ref.png",
-    width: 100,
-    height: 200,
-    palette: ["#cccccc", "#bbbbbb", "#aaaaaa"],
-    accent: "#cccccc",
-    brightness: 0.5,
-    saturation: 0.1,
-    contrast: 0.1,
-    warmth: 0,
-    textDensity: 0.1,
-    edgeDensity: 0.2,
-    mood: "neutral",
-    cues: [],
-    status: "ref",
     textStyle,
   };
 }

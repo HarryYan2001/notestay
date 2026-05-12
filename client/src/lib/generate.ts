@@ -18,21 +18,8 @@ import {
   VIRAL_CUE_LABELS,
 } from "./viral-style";
 import {
-  applyScreenshotBodyOpening,
-  applyScreenshotTitleStyle,
-  applyScreenshotToCover,
-  applyScreenshotToPage,
-  buildAccentStickerLayer,
-  emptyScreenshotProfile,
-  SCREENSHOT_CUE_LABELS,
-  SCREENSHOT_MOOD_LABELS,
-  screenshotWarningMessage,
-  type ScreenshotCue,
-  type ScreenshotMood,
-  type ScreenshotStyleProfile,
-} from "./screenshot-style";
-import {
   applyTextStyleToBodyOpening,
+  applyTextStyleToBodySections,
   applyTextStyleToClosing,
   applyTextStyleToTitle,
   emptyTextProfile,
@@ -177,33 +164,6 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const viralWarning = viralWarningMessage(viralProfile);
   if (viralWarning) warnings.push(viralWarning);
 
-  // Screenshot-derived style profile. When the user uploaded a target-note
-  // screenshot, the create-page analyzer wrote the learned cues into
-  // `input.screenshotRef`. We re-hydrate it into a full ScreenshotStyleProfile
-  // here so the same code path can be used for title / body / cover styling.
-  const screenshotProfile: ScreenshotStyleProfile = input.screenshotRef
-    ? {
-        hasInput: true,
-        previewUrl: input.screenshotRef.previewUrl,
-        filename: input.screenshotRef.filename,
-        width: input.screenshotRef.width,
-        height: input.screenshotRef.height,
-        palette: input.screenshotRef.palette,
-        accent: input.screenshotRef.accent,
-        brightness: input.screenshotRef.brightness,
-        saturation: input.screenshotRef.saturation,
-        contrast: input.screenshotRef.contrast,
-        warmth: input.screenshotRef.warmth,
-        textDensity: input.screenshotRef.textDensity,
-        edgeDensity: input.screenshotRef.edgeDensity,
-        mood: input.screenshotRef.mood as ScreenshotMood,
-        cues: input.screenshotRef.cues as ScreenshotCue[],
-        status: input.screenshotRef.status,
-      }
-    : emptyScreenshotProfile();
-  const screenshotWarning = screenshotWarningMessage(screenshotProfile);
-  if (screenshotWarning) warnings.push(screenshotWarning);
-
   // Re-hydrate the OCR-derived text style profile from app state so the same
   // pure decorators (applyTextStyleToTitle / ToBodyOpening / ToClosing) can
   // be used here as in the smoke tests.
@@ -228,7 +188,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const textWarning = textStyleWarningMessage(textProfile, textStrength);
   if (textWarning) warnings.push(textWarning);
 
-  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.mood ?? ""}|${(input.screenshotRef?.cues ?? []).join(",")}|${input.screenshotRef?.textStyle?.tone ?? ""}|${(input.screenshotRef?.textStyle?.cues ?? []).join(",")}|${textStrength}|${Date.now()}|${Math.random()}`;
+  const seedString = `${input.inputMode}|${input.style}|${hotelName || ""}|${city || ""}|${userContent}|${input.viralRef}|${input.screenshotRef?.textStyle?.tone ?? ""}|${(input.screenshotRef?.textStyle?.cues ?? []).join(",")}|${textStrength}|${Date.now()}|${Math.random()}`;
   const seed = seedFromString(seedString);
 
   // 2) Title
@@ -246,10 +206,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
   // picks up both the cover mood AND the reference note's textual rhythm
   // (drama / 治愈 / 高级 / 口语) without ever copying source phrases.
   const title = applyTextStyleToTitle(
-    applyScreenshotTitleStyle(
-      applyTitleStyle(baseTitle, viralProfile),
-      screenshotProfile,
-    ),
+    applyTitleStyle(baseTitle, viralProfile),
     textProfile,
     textStrength,
   );
@@ -267,7 +224,7 @@ export function generateNote(input: AppInputState): GeneratedNote {
     stripBanned(`${subject}｜${pick(style.toneAdjectives, seed + 5)}入住,${pick(style.titleSuffixes, seed + 23)}`),
   ].map((t) =>
     applyTextStyleToTitle(
-      applyScreenshotTitleStyle(applyTitleStyle(t, viralProfile), screenshotProfile),
+      applyTitleStyle(t, viralProfile),
       textProfile,
       textStrength,
     ),
@@ -691,12 +648,9 @@ export function generateNote(input: AppInputState): GeneratedNote {
     `没夸张，住进去那一刻心情就被${tone}拿捏了。`,
   ];
   const opening = applyTextStyleToBodyOpening(
-    applyScreenshotBodyOpening(
-      decorateBodyOpening(
-        stripBanned(pick(hookBank, seed + 31)),
-        viralProfile,
-      ),
-      screenshotProfile,
+    decorateBodyOpening(
+      stripBanned(pick(hookBank, seed + 31)),
+      viralProfile,
     ),
     textProfile,
     textStrength,
@@ -728,6 +682,18 @@ export function generateNote(input: AppInputState): GeneratedNote {
     textProfile,
     textStrength,
   );
+
+  // Apply the OCR-learned text style to each section's body text. This is
+  // the step that makes the 正文 noticeably change with strength — without
+  // it, only the title / opening / closing would carry the imitated tone.
+  // The transformer is a no-op when no text was learned (hasText=false) or
+  // when strength is "light" for non-playful tones. The price section keeps
+  // its terse standard phrasing so we never imply a price imitation.
+  if (sections.length > 0 && textProfile.hasText) {
+    const transformed = applyTextStyleToBodySections(sections, textProfile, textStrength, seed);
+    sections.length = 0;
+    sections.push(...transformed);
+  }
 
   // Compose body. Drop sections one by one if we exceed 600 CJK chars.
   function compose(usedSections: Section[]): string {
@@ -837,8 +803,12 @@ export function generateNote(input: AppInputState): GeneratedNote {
     ? `${city} · 这家值得记住`
     : "酒店美好,一键记住";
 
-  // Build editable cover with layer model
-  let cover = buildCoverDesign({
+  // Build editable cover with layer model. The cover's visuals are
+  // intentionally derived from the user's own images + the chosen style
+  // palette only — uploading a target-note screenshot has NO effect on
+  // the cover/page colors, accents or layer placement. The screenshot is
+  // strictly an OCR source for learning the textual style of the body.
+  const cover = buildCoverDesign({
     styleKey: input.style,
     coverHeadline,
     coverSubline,
@@ -846,16 +816,6 @@ export function generateNote(input: AppInputState): GeneratedNote {
     coverImage,
     seed,
   });
-  // If the user uploaded a target-note screenshot, bend the cover's
-  // background gradient + text-layer styling + accent sticker toward the
-  // learned palette / mood. Visible in the editor, phone preview and export.
-  if (screenshotProfile.hasInput) {
-    cover = applyScreenshotToCover(cover, screenshotProfile, input.style);
-    const accent = buildAccentStickerLayer(screenshotProfile, seed);
-    if (accent) {
-      cover = { ...cover, layers: [...cover.layers, accent] };
-    }
-  }
 
   // No default stickers — cover and inner pages stay clean photo/design by
   // default. Users can pick from the preset sticker library in the editor.
@@ -868,15 +828,12 @@ export function generateNote(input: AppInputState): GeneratedNote {
     const img = page.imageId
       ? input.images.find((i) => i.id === page.imageId)
       : undefined;
-    const base = buildScenePageDesign({
+    pageDesigns[page.index] = buildScenePageDesign({
       styleKey: input.style,
       page,
       image: img,
       seed: seed + page.index,
     });
-    pageDesigns[page.index] = screenshotProfile.hasInput
-      ? applyScreenshotToPage(base, screenshotProfile, input.style)
-      : base;
   }
 
   return {
@@ -903,14 +860,14 @@ export function generateNote(input: AppInputState): GeneratedNote {
       extractedTitle: viralProfile.extractedTitle,
     },
     screenshotStyle: {
-      hasInput: screenshotProfile.hasInput,
-      mood: screenshotProfile.mood,
-      moodLabel: SCREENSHOT_MOOD_LABELS[screenshotProfile.mood] ?? "",
-      cues: screenshotProfile.cues,
-      cueLabels: screenshotProfile.cues.map((c) => SCREENSHOT_CUE_LABELS[c]),
-      palette: screenshotProfile.palette,
-      accent: screenshotProfile.accent,
-      status: screenshotProfile.status,
+      // `hasInput` reflects whether the user uploaded a reference screenshot
+      // AT ALL (the OCR text-style summary then carries the actually-learned
+      // tone). Visual cues are no longer learned, but we surface this flag
+      // so the result page can still know a screenshot was provided.
+      hasInput: !!input.screenshotRef,
+      status: input.screenshotRef
+        ? "已上传参考笔记截图，仅用于学习正文文字风格（OCR），不影响封面与内页视觉。"
+        : "未上传参考笔记截图。",
       text: {
         hasText: textProfile.hasText,
         tone: textProfile.tone,
