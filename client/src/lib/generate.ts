@@ -1,7 +1,10 @@
 import type {
   AppInputState,
+  CoverDesign,
+  CoverLayer,
   GeneratedNote,
   PageLayout,
+  StickerOverlay,
   StyleKey,
   UploadedImage,
 } from "./types";
@@ -267,6 +270,29 @@ export function generateNote(input: AppInputState): GeneratedNote {
     ? `${city} · 这家值得记住`
     : "酒店美好,一键记住";
 
+  // Build editable cover with layer model
+  const cover = buildCoverDesign({
+    styleKey: input.style,
+    coverHeadline,
+    coverSubline,
+    images: input.images,
+    coverImage,
+    seed,
+  });
+
+  // Build default stickers (suggestions) — these float over the phone preview
+  const stickers: StickerOverlay[] = stickerCopy.slice(0, 2).map((text, i) => ({
+    id: `stk_${seed}_${i}`,
+    text,
+    x: i === 0 ? 12 : 58,
+    y: i === 0 ? 8 : 76,
+    rotation: i === 0 ? -4 : 5,
+    font: i === 0 ? "marker" : "rounded",
+    color: "#ffffff",
+    background: i === 0 ? "rgba(0,0,0,0.45)" : "rgba(232,89,107,0.85)",
+    fontSize: 14,
+  }));
+
   return {
     styleKey: input.style,
     title,
@@ -275,9 +301,127 @@ export function generateNote(input: AppInputState): GeneratedNote {
     tags,
     commentSeeds,
     pageLayout: layout,
-    coverHeadline,
-    coverSubline,
-    stickerCopy,
+    cover,
+    stickers,
     warnings,
+  };
+}
+
+function buildCoverDesign(opts: {
+  styleKey: StyleKey;
+  coverHeadline: string;
+  coverSubline: string;
+  images: UploadedImage[];
+  coverImage: UploadedImage | undefined;
+  seed: number;
+}): CoverDesign {
+  const { styleKey, coverHeadline, coverSubline, images, coverImage, seed } = opts;
+  const palette = STYLES[styleKey].palette;
+  const background = `linear-gradient(135deg, ${palette[0]} 0%, ${palette[1]} 55%, ${palette[2]} 100%)`;
+
+  const layers: CoverLayer[] = [];
+  // Main image layer (fills most of frame)
+  if (coverImage) {
+    layers.push({
+      id: `lyr_main_${seed}`,
+      type: "image",
+      imageUrl: coverImage.url,
+      x: 6,
+      y: 8,
+      w: 88,
+      h: 60,
+      rotation: 0,
+      z: 1,
+      offsetX: 50,
+      offsetY: 45,
+      zoom: 1.1,
+      radius: 18,
+      shadow: true,
+    });
+  }
+  // Secondary photo
+  const secondary = images.find((i) => i.id !== coverImage?.id);
+  if (secondary) {
+    layers.push({
+      id: `lyr_sec_${seed}`,
+      type: "image",
+      imageUrl: secondary.url,
+      x: 8,
+      y: 70,
+      w: 38,
+      h: 24,
+      rotation: -3,
+      z: 2,
+      offsetX: 50,
+      offsetY: 50,
+      zoom: 1.05,
+      radius: 12,
+      shadow: true,
+    });
+  }
+  const tertiary = images.find(
+    (i) => i.id !== coverImage?.id && i.id !== secondary?.id,
+  );
+  if (tertiary) {
+    layers.push({
+      id: `lyr_ter_${seed}`,
+      type: "image",
+      imageUrl: tertiary.url,
+      x: 54,
+      y: 70,
+      w: 38,
+      h: 24,
+      rotation: 4,
+      z: 2,
+      offsetX: 50,
+      offsetY: 50,
+      zoom: 1.05,
+      radius: 12,
+      shadow: true,
+    });
+  }
+
+  // Headline text
+  layers.push({
+    id: `lyr_title_${seed}`,
+    type: "text",
+    text: coverHeadline,
+    x: 6,
+    y: 12,
+    w: 88,
+    h: 22,
+    rotation: 0,
+    z: 5,
+    color: "#ffffff",
+    fontSize: 32,
+    fontWeight: 900,
+    font: "sans",
+    align: "center",
+    background: null,
+    shadow: true,
+  });
+  // Subline text
+  layers.push({
+    id: `lyr_sub_${seed}`,
+    type: "text",
+    text: coverSubline,
+    x: 12,
+    y: 92,
+    w: 76,
+    h: 6,
+    rotation: 0,
+    z: 6,
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: 600,
+    font: "sans",
+    align: "center",
+    background: "rgba(0,0,0,0.35)",
+    shadow: false,
+  });
+  return {
+    background,
+    bgImageUrl: null,
+    layers,
   };
 }

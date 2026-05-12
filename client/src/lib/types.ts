@@ -61,6 +61,75 @@ export interface AppInputState {
   viralRefNotes: string;
 }
 
+export type CoverLayerType = "image" | "text";
+
+export type StickerFont =
+  | "sans"
+  | "serif"
+  | "rounded"
+  | "mono"
+  | "brush"
+  | "marker";
+
+export interface CoverLayerBase {
+  id: string;
+  type: CoverLayerType;
+  // position as percentage of cover (0-100), relative to layer center
+  x: number;
+  y: number;
+  // width/height as percentage of cover
+  w: number;
+  h: number;
+  rotation: number;
+  z: number;
+}
+
+export interface CoverImageLayer extends CoverLayerBase {
+  type: "image";
+  // imageUrl can be: object URL from uploaded image, or external url
+  imageUrl: string;
+  // crop offset in percent (0-100) — where to position the image inside its frame
+  offsetX: number;
+  offsetY: number;
+  // zoom factor (1 = fit)
+  zoom: number;
+  radius: number;        // border-radius px
+  shadow: boolean;
+}
+
+export interface CoverTextLayer extends CoverLayerBase {
+  type: "text";
+  text: string;
+  color: string;
+  fontSize: number;       // px at cover width 320
+  fontWeight: number;     // 400-900
+  font: StickerFont;
+  align: "left" | "center" | "right";
+  background: string | null;  // backdrop color (transparent if null)
+  shadow: boolean;
+}
+
+export type CoverLayer = CoverImageLayer | CoverTextLayer;
+
+export interface CoverDesign {
+  background: string;     // css gradient or color
+  bgImageUrl: string | null;
+  layers: CoverLayer[];
+}
+
+export interface StickerOverlay {
+  id: string;
+  text: string;
+  // % of preview width/height
+  x: number;
+  y: number;
+  rotation: number;
+  font: StickerFont;
+  color: string;
+  background: string | null;
+  fontSize: number;
+}
+
 export interface GeneratedNote {
   styleKey: StyleKey;
   title: string;
@@ -69,9 +138,8 @@ export interface GeneratedNote {
   tags: string[];
   commentSeeds: string[];
   pageLayout: PageLayout[];
-  coverHeadline: string;
-  coverSubline: string;
-  stickerCopy: string[];
+  cover: CoverDesign;
+  stickers: StickerOverlay[];
   warnings: string[];
 }
 
