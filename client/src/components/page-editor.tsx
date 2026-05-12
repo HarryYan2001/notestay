@@ -17,26 +17,35 @@ import {
   ZoomOut,
   RotateCcw,
   Upload,
-  Plus,
   Pencil,
   X,
   Sticker,
   Move,
+  Settings,
+  ArrowUpToLine,
+  ArrowDownToLine,
+  ChevronLeft,
+  ChevronRight,
+  Repeat,
 } from "lucide-react";
 
 interface Props {
   page: PageLayout;
+  pageCount: number;
+  pageOrdinal: number;
   design: PageDesign;
-  stickers: StickerOverlay[];                 // already filtered to this page
+  stickers: StickerOverlay[]; // already filtered to this page
   onChangeDesign: (next: PageDesign) => void;
   onChangeStickers: (next: StickerOverlay[]) => void;
+  onPrevPage?: () => void;
+  onNextPage?: () => void;
   width?: number;
   testIdPrefix?: string;
 }
 
 type DragState =
   | { kind: "move"; layerId: string; startX: number; startY: number; origX: number; origY: number }
-  | { kind: "resize"; layerId: string; startX: number; startY: number; origW: number; origH: number }
+  | { kind: "resize"; layerId: string; startX: number; startY: number; origW: number; origH: number; origRot: number; centerX: number; centerY: number; startAngle: number }
   | { kind: "rotate"; layerId: string; centerX: number; centerY: number; startAngle: number; origRot: number }
   | { kind: "imgpan"; layerId: string; startX: number; startY: number; origOX: number; origOY: number };
 
@@ -46,24 +55,35 @@ type StickerDrag =
 
 export function PageEditor({
   page,
+  pageCount,
+  pageOrdinal,
   design,
   stickers,
   onChangeDesign,
   onChangeStickers,
+  onPrevPage,
+  onNextPage,
   width = 320,
   testIdPrefix = "page",
 }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [editingImageId, setEditingImageId] = useState<string | null>(null); // when user double-clicks an image to pan inside its frame
+  const [editingImageId, setEditingImageId] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
   const [stickerDrag, setStickerDrag] = useState<StickerDrag | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const stageH = Math.round((width * 4) / 3);
 
   const selected = design.layers.find((l) => l.id === selectedId) || null;
   const selectedSticker = stickers.find((s) => s.id === selectedStickerId) || null;
+
+  // Hide settings when nothing is selected.
+  useEffect(() => {
+    if (!selected && !selectedSticker) setSettingsOpen(false);
+  }, [selected, selectedSticker]);
 
   const updateLayer = useCallback(
     (id: string, patch: Partial<CoverLayer>) => {
@@ -89,10 +109,17 @@ export function PageEditor({
     [design, onChangeDesign],
   );
 
-  const bringForward = useCallback(
+  const bringToFront = useCallback(
     (id: string) => {
       const max = Math.max(0, ...design.layers.map((l) => l.z));
       updateLayer(id, { z: max + 1 });
+    },
+    [design.layers, updateLayer],
+  );
+  const sendToBack = useCallback(
+    (id: string) => {
+      const min = Math.min(0, ...design.layers.map((l) => l.z));
+      updateLayer(id, { z: min - 1 });
     },
     [design.layers, updateLayer],
   );
@@ -206,7 +233,7 @@ export function PageEditor({
       origY: l.y,
     });
   }
-  function startResize(e: React.PointerEvent, l: CoverLayer) {
+  function startResize(e: React.PointerEvent, l: CoverLayer, _target: HTMLElement) {
     e.stopPropagation();
     setDrag({
       kind: "resize",
@@ -215,6 +242,10 @@ export function PageEditor({
       startY: e.clientY,
       origW: l.w,
       origH: l.h,
+      origRot: l.rotation,
+      centerX: 0,
+      centerY: 0,
+      startAngle: 0,
     });
   }
   function startRotate(e: React.PointerEvent, l: CoverLayer, target: HTMLElement) {
@@ -327,12 +358,23 @@ export function PageEditor({
       setSelectedId(id);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (replaceInputRef.current) replaceInputRef.current.value = "";
   }
 
   function replaceBackgroundImage(files: FileList | null) {
     if (!files || !files[0]) return;
     const url = URL.createObjectURL(files[0]);
     onChangeDesign({ ...design, bgImageUrl: url });
+  }
+
+  // Wheel zoom while in image edit mode
+  function onLayerWheel(e: React.WheelEvent, l: CoverImageLayer) {
+    if (editingImageId !== l.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const delta = e.deltaY > 0 ? -0.08 : 0.08;
+    const next = clampNum(l.zoom + delta, 0.5, 3);
+    updateLayer(l.id, { zoom: Number(next.toFixed(2)) });
   }
 
   // Stickers
@@ -367,14 +409,36 @@ export function PageEditor({
   return (
     <div className="space-y-3" data-testid={`${testIdPrefix}-editor`}>
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <div>
-          正在编辑 ·
-          <span className="ml-1 font-semibold text-foreground" data-testid={`${testIdPrefix}-current-index`}>
-            第 {page.index + 1} 张
-          </span>
-          <span className="ml-1">{page.index === 0 ? "(封面)" : `(${page.role})`}</span>
+        <div className="inline-flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onPrevPage}
+            disabled={!onPrevPage || pageOrdinal <= 1}
+            className="inline-flex items-center justify-center size-7 rounded-full border border-border bg-card hover-elevate disabled:opacity-40 disabled:cursor-not-allowed"
+            data-testid={`${testIdPrefix}-prev-page`}
+            aria-label="上一张"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          <div>
+            正在编辑 ·
+            <span className="ml-1 font-semibold text-foreground" data-testid={`${testIdPrefix}-current-index`}>
+              第 {pageOrdinal} / {pageCount} 张
+            </span>
+            <span className="ml-1">{page.index === 0 ? "(封面)" : `(${page.role})`}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onNextPage}
+            disabled={!onNextPage || pageOrdinal >= pageCount}
+            className="inline-flex items-center justify-center size-7 rounded-full border border-border bg-card hover-elevate disabled:opacity-40 disabled:cursor-not-allowed"
+            data-testid={`${testIdPrefix}-next-page`}
+            aria-label="下一张"
+          >
+            <ChevronRight className="size-4" />
+          </button>
         </div>
-        <div className="text-[11px]">点击页面图片选中,再点一次可拖动调整裁切位置</div>
+        <div className="text-[11px] hidden md:block">点击图层选中,双击图片进入裁切模式(滚轮缩放)</div>
       </div>
 
       <div
@@ -425,7 +489,6 @@ export function PageEditor({
                   style={{
                     ...common,
                     borderRadius: l.radius,
-                    overflow: "hidden", // image MUST not exceed module bounds
                     boxShadow: l.shadow ? "0 8px 24px rgba(0,0,0,0.25)" : "none",
                     outline: isSelected ? "2px solid #fff" : "none",
                     outlineOffset: isSelected ? 2 : 0,
@@ -433,7 +496,6 @@ export function PageEditor({
                   data-testid={`${testIdPrefix}-layer-${l.id}`}
                   onPointerDown={(e) => {
                     if (isSelected && isImageEditing) {
-                      // already editing image — start pan
                       startImgPan(e, l);
                     } else {
                       startMove(e, l);
@@ -444,36 +506,74 @@ export function PageEditor({
                     setSelectedId(l.id);
                     setEditingImageId(l.id);
                   }}
+                  onWheel={(e) => onLayerWheel(e, l)}
                 >
-                  <img
-                    src={l.imageUrl}
-                    alt=""
-                    draggable={false}
+                  <div
                     style={{
                       position: "absolute",
                       inset: 0,
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      objectPosition: `${l.offsetX}% ${l.offsetY}%`,
-                      transform: `scale(${l.zoom})`,
-                      transformOrigin: `${l.offsetX}% ${l.offsetY}%`,
-                      pointerEvents: "none",
+                      borderRadius: l.radius,
+                      overflow: "hidden",
                     }}
-                  />
+                  >
+                    <img
+                      src={l.imageUrl}
+                      alt=""
+                      draggable={false}
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        objectPosition: `${l.offsetX}% ${l.offsetY}%`,
+                        transform: `scale(${l.zoom})`,
+                        transformOrigin: `${l.offsetX}% ${l.offsetY}%`,
+                        pointerEvents: "none",
+                      }}
+                    />
+                  </div>
                   {isSelected && (
                     <>
-                      <ResizeHandle onPointerDown={(e) => startResize(e, l)} testId={`${testIdPrefix}-resize-${l.id}`} />
-                      <RotateHandle
-                        onPointerDown={(e) => {
-                          const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                      <CornerButton
+                        position="tl"
+                        label="换图"
+                        onClick={() => replaceInputRef.current?.click()}
+                        testId={`${testIdPrefix}-corner-replace-${l.id}`}
+                        icon={<Repeat className="size-3" />}
+                      />
+                      <CornerButton
+                        position="tr"
+                        label=""
+                        onClick={() => removeLayer(l.id)}
+                        testId={`${testIdPrefix}-corner-delete-${l.id}`}
+                        icon={<Trash2 className="size-3" />}
+                        variant="danger"
+                        title="删除图层"
+                      />
+                      <CornerButton
+                        position="bl"
+                        label=""
+                        onClick={() => setSettingsOpen((v) => !v)}
+                        testId={`${testIdPrefix}-corner-settings-${l.id}`}
+                        icon={<Settings className="size-3" />}
+                        title="详细设置"
+                      />
+                      <ResizeRotateGroup
+                        onResize={(e) => {
+                          const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
+                          startResize(e, l, target);
+                        }}
+                        onRotate={(e) => {
+                          const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
                           startRotate(e, l, target);
                         }}
-                        testId={`${testIdPrefix}-rotate-${l.id}`}
+                        testIdResize={`${testIdPrefix}-corner-resize-${l.id}`}
+                        testIdRotate={`${testIdPrefix}-corner-rotate-${l.id}`}
                       />
                       {isImageEditing && (
-                        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white">
-                          <Move className="size-3" /> 拖动图片调整位置
+                        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white whitespace-nowrap">
+                          <Move className="size-3" /> 拖动 / 滚轮缩放
                         </div>
                       )}
                     </>
@@ -522,13 +622,34 @@ export function PageEditor({
                 </div>
                 {isSelected && (
                   <>
-                    <ResizeHandle onPointerDown={(e) => startResize(e, l)} testId={`${testIdPrefix}-resize-${l.id}`} />
-                    <RotateHandle
-                      onPointerDown={(e) => {
-                        const target = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+                    <CornerButton
+                      position="tr"
+                      label=""
+                      onClick={() => removeLayer(l.id)}
+                      testId={`${testIdPrefix}-corner-delete-${l.id}`}
+                      icon={<Trash2 className="size-3" />}
+                      variant="danger"
+                      title="删除图层"
+                    />
+                    <CornerButton
+                      position="bl"
+                      label=""
+                      onClick={() => setSettingsOpen((v) => !v)}
+                      testId={`${testIdPrefix}-corner-settings-${l.id}`}
+                      icon={<Settings className="size-3" />}
+                      title="详细设置"
+                    />
+                    <ResizeRotateGroup
+                      onResize={(e) => {
+                        const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
+                        startResize(e, l, target);
+                      }}
+                      onRotate={(e) => {
+                        const target = (e.currentTarget as HTMLElement).parentElement?.parentElement as HTMLElement;
                         startRotate(e, l, target);
                       }}
-                      testId={`${testIdPrefix}-rotate-${l.id}`}
+                      testIdResize={`${testIdPrefix}-corner-resize-${l.id}`}
+                      testIdRotate={`${testIdPrefix}-corner-rotate-${l.id}`}
                     />
                   </>
                 )}
@@ -584,27 +705,30 @@ export function PageEditor({
         ))}
       </div>
 
+      {/* Hidden file inputs */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => onPickImage(e.target.files, "add")}
+        data-testid={`${testIdPrefix}-file-input`}
+      />
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => onPickImage(e.target.files, "replace")}
+        data-testid={`${testIdPrefix}-replace-input`}
+      />
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) =>
-            onPickImage(e.target.files, selected?.type === "image" ? "replace" : "add")
-          }
-          data-testid={`${testIdPrefix}-file-input`}
-        />
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
-          onClick={() => {
-            if (fileInputRef.current) {
-              fileInputRef.current.dataset.mode = "add";
-              fileInputRef.current.click();
-            }
-          }}
+          onClick={() => fileInputRef.current?.click()}
           data-testid={`${testIdPrefix}-add-image`}
         >
           <ImageIcon className="size-3.5" /> 新增图片
@@ -647,43 +771,52 @@ export function PageEditor({
             <Trash2 className="size-3.5" /> 移除背景图
           </button>
         )}
+        {selected && (
+          <>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
+              onClick={() => bringToFront(selected.id)}
+              data-testid={`${testIdPrefix}-bring-front`}
+            >
+              <ArrowUpToLine className="size-3.5" /> 置顶
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 hover-elevate"
+              onClick={() => sendToBack(selected.id)}
+              data-testid={`${testIdPrefix}-send-back`}
+            >
+              <ArrowDownToLine className="size-3.5" /> 置底
+            </button>
+          </>
+        )}
       </div>
 
-      {/* Selected layer panel */}
-      {selected ? (
+      {/* Settings panel: hidden until user clicks the bottom-left settings on a layer */}
+      {settingsOpen && selected ? (
         <div
           className="rounded-2xl border border-card-border bg-card/70 p-3 text-xs space-y-3"
           data-testid={`${testIdPrefix}-selected-panel`}
         >
           <div className="flex items-center justify-between">
             <div className="font-semibold">
-              {selected.type === "image" ? "图片图层" : "文字图层"}
+              {selected.type === "image" ? "图片图层详细设置" : "文字图层详细设置"}
             </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => bringForward(selected.id)}
-                className="rounded-full border border-border px-2 py-0.5 hover-elevate"
-                data-testid={`${testIdPrefix}-forward`}
-              >
-                置顶
-              </button>
-              <button
-                type="button"
-                onClick={() => removeLayer(selected.id)}
-                className="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 text-destructive px-2 py-0.5"
-                data-testid={`${testIdPrefix}-delete-layer`}
-              >
-                <Trash2 className="size-3" /> 删除
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(false)}
+              className="rounded-full border border-border px-2 py-0.5 hover-elevate inline-flex items-center gap-1"
+              data-testid={`${testIdPrefix}-close-settings`}
+            >
+              <X className="size-3" /> 收起
+            </button>
           </div>
 
           {selected.type === "image" ? (
             <ImageLayerPanel
               layer={selected}
               onChange={(p) => updateLayer(selected.id, p)}
-              onReplace={() => fileInputRef.current?.click()}
               onTogglePan={() =>
                 setEditingImageId((s) => (s === selected.id ? null : selected.id))
               }
@@ -808,26 +941,108 @@ export function PageEditor({
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-card/30 p-3 text-xs text-muted-foreground">
-          点击页面上的图层进行编辑;拖拽移动,右下角缩放,顶部圆点旋转;双击图片可调整裁切位置;贴纸可直接拖动 / 旋转。
+          点击图层选中后:右下角拖动可缩放/旋转;左上角"换图";右上角删除;左下角设置查看详细参数;双击图片进入裁切模式(滚轮缩放)。
         </div>
       )}
     </div>
   );
 }
 
-function ResizeHandle({
-  onPointerDown,
+function CornerButton({
+  position,
+  label,
+  onClick,
   testId,
+  icon,
+  variant,
+  title,
 }: {
-  onPointerDown: (e: React.PointerEvent) => void;
+  position: "tl" | "tr" | "bl";
+  label: string;
+  onClick: () => void;
   testId: string;
+  icon: React.ReactNode;
+  variant?: "danger";
+  title?: string;
+}) {
+  const pos: React.CSSProperties = {
+    position: "absolute",
+    zIndex: 5,
+  };
+  const offset = -10;
+  if (position === "tl") {
+    pos.top = offset;
+    pos.left = offset;
+  } else if (position === "tr") {
+    pos.top = offset;
+    pos.right = offset;
+  } else if (position === "bl") {
+    pos.bottom = offset;
+    pos.left = offset;
+  }
+  const bgClass =
+    variant === "danger"
+      ? "bg-rose-500 text-white"
+      : "bg-white/95 text-foreground";
+  return (
+    <button
+      type="button"
+      style={pos}
+      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-1 shadow border border-black/10 ${bgClass} hover:scale-105 transition`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      data-testid={testId}
+      title={title || label}
+    >
+      {icon}
+      {label && <span className="text-[10px] font-medium">{label}</span>}
+    </button>
+  );
+}
+
+function ResizeRotateGroup({
+  onResize,
+  onRotate,
+  testIdResize,
+  testIdRotate,
+}: {
+  onResize: (e: React.PointerEvent) => void;
+  onRotate: (e: React.PointerEvent) => void;
+  testIdResize: string;
+  testIdRotate: string;
 }) {
   return (
     <div
-      className="absolute right-0 bottom-0 size-4 bg-white rounded-tl-md cursor-se-resize"
-      onPointerDown={onPointerDown}
-      data-testid={testId}
-    />
+      className="absolute -right-2 -bottom-2 inline-flex items-center gap-1 rounded-full bg-white/95 shadow border border-black/10 px-1 py-0.5"
+      style={{ zIndex: 5 }}
+    >
+      <button
+        type="button"
+        className="inline-flex items-center justify-center size-4 rounded-full hover:bg-primary/10 cursor-grab"
+        onPointerDown={onRotate}
+        onClick={(e) => e.stopPropagation()}
+        data-testid={testIdRotate}
+        title="旋转"
+        aria-label="旋转"
+      >
+        <RotateCcw className="size-3 text-primary" />
+      </button>
+      <span className="block w-px h-3 bg-border" />
+      <button
+        type="button"
+        className="inline-flex items-center justify-center size-4 rounded-full hover:bg-primary/10 cursor-se-resize"
+        onPointerDown={onResize}
+        onClick={(e) => e.stopPropagation()}
+        data-testid={testIdResize}
+        title="拖动调整大小"
+        aria-label="调整大小"
+      >
+        <span className="block size-2 rounded-full border-2 border-primary" />
+      </button>
+    </div>
   );
 }
 
@@ -853,14 +1068,12 @@ function RotateHandle({
 function ImageLayerPanel({
   layer,
   onChange,
-  onReplace,
   onTogglePan,
   panEditing,
   testIdPrefix,
 }: {
   layer: CoverImageLayer;
   onChange: (p: Partial<CoverImageLayer>) => void;
-  onReplace: () => void;
   onTogglePan: () => void;
   panEditing: boolean;
   testIdPrefix: string;
@@ -868,14 +1081,6 @@ function ImageLayerPanel({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 hover-elevate"
-          onClick={onReplace}
-          data-testid={`${testIdPrefix}-replace-image`}
-        >
-          <Upload className="size-3" /> 替换图片
-        </button>
         <button
           type="button"
           className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${
@@ -1113,6 +1318,7 @@ function TextLayerPanel({
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
+const clampNum = clamp;
 
 function parseColor(c: string | null): string {
   if (!c) return "#000000";

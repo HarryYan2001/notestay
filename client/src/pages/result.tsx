@@ -253,9 +253,11 @@ export default function ResultPage() {
                 selectedPageIndex={selectedPageIndex}
                 onSelectPage={setSelectedPageIndex}
                 onStickersChange={updateStickers}
+                onTitleChange={(t) => updateNote({ title: t })}
+                onBodyChange={(b) => updateNote({ body: b })}
               />
               <p className="text-xs text-muted-foreground text-center">
-                左右滑动图片页 · 选中的页面可在右侧编辑 · 贴纸仅显示在所属页面
+                左右滑动图片页 · 直接点击标题/正文可编辑 · 贴纸仅显示在所属页面
               </p>
             </div>
           </div>
@@ -269,6 +271,10 @@ export default function ResultPage() {
             >
               <PageEditor
                 page={currentPage}
+                pageCount={note.pageLayout.length}
+                pageOrdinal={
+                  note.pageLayout.findIndex((p) => p.index === currentPage.index) + 1
+                }
                 design={currentDesign}
                 stickers={currentStickers}
                 onChangeDesign={(d) => updatePageDesign(currentPage.index, d)}
@@ -276,6 +282,16 @@ export default function ResultPage() {
                   // Merge: replace stickers on this page; keep others
                   const others = note.stickers.filter((s) => s.pageIndex !== currentPage.index);
                   updateStickers([...others, ...next]);
+                }}
+                onPrevPage={() => {
+                  const idx = note.pageLayout.findIndex((p) => p.index === currentPage.index);
+                  if (idx > 0) setSelectedPageIndex(note.pageLayout[idx - 1].index);
+                }}
+                onNextPage={() => {
+                  const idx = note.pageLayout.findIndex((p) => p.index === currentPage.index);
+                  if (idx >= 0 && idx < note.pageLayout.length - 1) {
+                    setSelectedPageIndex(note.pageLayout[idx + 1].index);
+                  }
                 }}
                 width={320}
                 testIdPrefix="page"
@@ -305,60 +321,48 @@ export default function ResultPage() {
               </div>
             </Block>
 
-            {/* Title */}
+            {/* Title alt suggestions + copy actions (body & title editing happen inline in preview) */}
             <Block
-              title="标题"
-              testId="block-title"
-              actions={
+              title="标题备选 & 文案复制"
+              testId="block-text-actions"
+              subtitle="标题与正文请直接在左侧手机预览中编辑;此处提供备选标题与一键复制。"
+            >
+              <div className="space-y-2">
+                {note.altTitles.map((t, i) => (
+                  <div
+                    key={i}
+                    className="text-sm text-muted-foreground flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-1.5"
+                    data-testid={`text-alt-title-${i}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wider">备选 {i + 1}</span>
+                      <span>{t}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => updateNote({ title: t })}
+                      className="text-[11px] rounded-full border border-border px-2 py-0.5 hover-elevate"
+                      data-testid={`button-apply-alt-title-${i}`}
+                    >
+                      用这个
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
                 <CopyBtn
                   active={copied === "title"}
                   onClick={() => copy("title", note.title)}
                   testId="button-copy-title"
+                  label="复制标题"
                 />
-              }
-            >
-              <textarea
-                value={note.title}
-                onChange={(e) => updateNote({ title: e.target.value })}
-                rows={2}
-                className="w-full rounded-xl border border-input bg-background p-3 text-xl md:text-2xl font-bold leading-snug focus:border-primary focus:outline-none resize-none"
-                data-testid="input-edit-title"
-                aria-label="编辑标题"
-              />
-              <div className="mt-3 space-y-1">
-                {note.altTitles.map((t, i) => (
-                  <div
-                    key={i}
-                    className="text-sm text-muted-foreground flex items-center gap-2"
-                    data-testid={`text-alt-title-${i}`}
-                  >
-                    <span className="text-[10px] uppercase tracking-wider">备选 {i + 1}</span>
-                    <span>{t}</span>
-                  </div>
-                ))}
-              </div>
-            </Block>
-
-            {/* Body */}
-            <Block
-              title="正文"
-              testId="block-body"
-              actions={
                 <CopyBtn
                   active={copied === "body"}
                   onClick={() => copy("body", note.body)}
                   testId="button-copy-body"
+                  label="复制正文"
                 />
-              }
-            >
-              <textarea
-                value={note.body}
-                onChange={(e) => updateNote({ body: e.target.value })}
-                rows={14}
-                className="w-full rounded-xl border border-input bg-background p-3 text-sm leading-relaxed focus:border-primary focus:outline-none resize-y"
-                data-testid="input-edit-body"
-                aria-label="编辑正文"
-              />
+              </div>
             </Block>
 
             {/* Tags */}
@@ -502,7 +506,7 @@ export default function ResultPage() {
         </div>
       </div>
 
-      {/* Offscreen export frames (visually hidden but in DOM so html-to-image can read them) */}
+      {/* Offscreen export frames (positioned off-screen but fully rendered so html-to-image can read them) */}
       <div
         aria-hidden
         style={{
@@ -510,7 +514,6 @@ export default function ResultPage() {
           left: "-99999px",
           top: 0,
           pointerEvents: "none",
-          opacity: 0,
         }}
         data-testid="export-frames-host"
       >
@@ -561,16 +564,26 @@ function Block({
   );
 }
 
-function CopyBtn({ active, onClick, testId }: { active: boolean; onClick: () => void; testId: string }) {
+function CopyBtn({
+  active,
+  onClick,
+  testId,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  testId: string;
+  label?: string;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground rounded-full border border-border px-2 py-1 hover-elevate"
       data-testid={testId}
     >
       {active ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {active ? "已复制" : "复制"}
+      {active ? "已复制" : label || "复制"}
     </button>
   );
 }
