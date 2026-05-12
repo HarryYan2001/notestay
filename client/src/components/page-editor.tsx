@@ -99,6 +99,7 @@ export function PageEditor({
   testIdPrefix = "page",
 }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const editorRootRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -479,6 +480,29 @@ export function PageEditor({
     };
   }, [editingImageId, design.layers, updateLayer]);
 
+  // Exit image adjustment mode when the user clicks anywhere outside the
+  // editor (including outside the stage, e.g. clicking far below the
+  // canvas). The stage's own onPointerDown already clears editingImageId
+  // for clicks on the stage background, but it cannot see clicks that
+  // never enter the stage at all. A document-level capture-phase listener
+  // covers that gap. We intentionally treat the entire editor root as
+  // "inside" so the settings panel's "退出调整图片" button and the
+  // adjust-aware toolbar stay reachable while the mode is active.
+  useEffect(() => {
+    if (!editingImageId) return;
+    const handler = (ev: PointerEvent) => {
+      const root = editorRootRef.current;
+      if (!root) return;
+      const target = ev.target as Node | null;
+      if (target && root.contains(target)) return;
+      setEditingImageId(null);
+    };
+    document.addEventListener("pointerdown", handler, true);
+    return () => {
+      document.removeEventListener("pointerdown", handler, true);
+    };
+  }, [editingImageId]);
+
   // Stickers
   function addSticker(preset?: StickerPreset) {
     const id = `stk_${Date.now()}`;
@@ -510,7 +534,11 @@ export function PageEditor({
   }
 
   return (
-    <div className="space-y-3" data-testid={`${testIdPrefix}-editor`}>
+    <div
+      ref={editorRootRef}
+      className="space-y-3"
+      data-testid={`${testIdPrefix}-editor`}
+    >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <div className="inline-flex items-center gap-2">
           <button
