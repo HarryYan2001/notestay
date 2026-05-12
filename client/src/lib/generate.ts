@@ -168,40 +168,124 @@ export function generateNote(input: AppInputState): GeneratedNote {
   const tone = pick(style.toneAdjectives, seed + 1);
 
   // Section heading bank — emoji + Chinese label. We render only the ones the
-  // user actually mentioned, in this order. The bank is intentionally broad so
-  // that user-provided dimension keywords (custom framework labels or phrases
-  // surfaced in free text — e.g. 露台, 隔音, 亲子, 浴缸, 停车) cluster into
-  // their own emoji-headed sections instead of falling into a generic bucket.
-  // More specific dimensions come first so e.g. "浴缸" wins over "房间".
-  const SECTION_BANK: { keys: string[]; emoji: string; label: string }[] = [
+  // user actually mentioned, in this order. Each entry has:
+  //   - `keys`: positive triggers. A single match is enough on its own when
+  //     no stronger dimension competes.
+  //   - `strongKeys` (optional): unambiguous triggers that should outweigh
+  //     bare keyword hits in other dimensions. E.g. 早餐 itself is a strong
+  //     trigger but a bare 咖啡 is not.
+  //   - `avoidKeys` (optional): when any of these appear in the same fragment
+  //     as a `keys` hit but no `strongKeys` hit, this dimension is skipped.
+  //     Used to prevent e.g. 咖啡 routing room-amenity text into 早餐, or
+  //     卫生间 hijacking the 卫生 (cleanliness) dimension.
+  // Order matters as a tiebreaker — more specific dimensions come first so
+  // e.g. 卫生间 (bathroom) wins over 卫生 (cleanliness).
+  type BankEntry = {
+    keys: string[];
+    strongKeys?: string[];
+    avoidKeys?: string[];
+    emoji: string;
+    label: string;
+  };
+  const SECTION_BANK: BankEntry[] = [
     { keys: ["位置", "地段", "交通", "周边", "出行", "地铁", "机场"], emoji: "📍", label: "位置" },
     { keys: ["停车", "车位", "代客泊车"], emoji: "🚗", label: "停车" },
     { keys: ["第一印象", "门面", "外观", "大堂", "lobby"], emoji: "✨", label: "第一印象" },
-    { keys: ["早餐", "餐食", "咖啡", "buffet", "自助餐", "下午茶"], emoji: "🍳", label: "早餐" },
+    // 早餐 / dining. Bare 咖啡/茶 are too weak — they appear in room amenity
+    // text ("免费矿泉水和茶包咖啡"). Require a meal/dining anchor.
+    {
+      keys: ["早餐", "早饭", "餐厅", "自助", "buffet", "下午茶", "包子", "粥", "油条", "面包", "牛奶", "能吃饱"],
+      strongKeys: ["早餐", "早饭", "餐厅", "自助", "buffet", "下午茶"],
+      avoidKeys: ["茶包", "咖啡机", "胶囊", "迎宾", "矿泉水", "冰箱", "电视", "办公"],
+      emoji: "🍳",
+      label: "早餐",
+    },
     { keys: ["浴缸", "泡澡", "汤池"], emoji: "🛁", label: "浴缸" },
-    { keys: ["卫生", "干净", "清洁", "打扫"], emoji: "🧼", label: "卫生" },
-    { keys: ["隔音", "安静", "噪音", "吵"], emoji: "🤫", label: "隔音" },
+    // 卫生间 / 浴室 — bathroom facilities. Must come BEFORE 卫生 so 卫生间
+    // does not collapse into the cleanliness dimension.
+    {
+      keys: ["卫生间", "浴室", "干湿分离", "花洒", "热水", "洗澡", "马桶", "洗漱台", "淋浴", "下水", "水压"],
+      strongKeys: ["卫生间", "干湿分离", "花洒", "淋浴", "马桶"],
+      emoji: "🚿",
+      label: "卫生间",
+    },
+    // 卫生 — cleanliness only. Reject if 卫生间 is what's actually meant.
+    {
+      keys: ["卫生", "干净", "清洁", "打扫", "灰尘", "污渍", "异味", "缝隙", "床单", "毛发", "一尘不染"],
+      strongKeys: ["干净", "清洁", "打扫", "灰尘", "污渍", "异味"],
+      avoidKeys: ["卫生间", "浴室", "干湿分离", "花洒", "热水", "洗澡", "马桶", "淋浴"],
+      emoji: "🧼",
+      label: "卫生",
+    },
+    // 隔音 — soundproofing / noise only. Reject when the fragment is really
+    // about bed comfort (床品 / 床软硬 / 枕头 / 床垫 etc.).
+    {
+      keys: ["隔音", "安静", "噪音", "吵", "听不到", "车声", "走廊声", "楼上楼下"],
+      strongKeys: ["隔音", "噪音", "听不到", "车声", "走廊声"],
+      avoidKeys: ["床垫", "床品", "床单", "床软", "枕头", "被子", "羽绒"],
+      emoji: "🤫",
+      label: "隔音",
+    },
     { keys: ["露台", "阳台", "户外平台"], emoji: "🌿", label: "露台" },
     { keys: ["亲子", "儿童", "小孩", "宝宝", "婴儿床"], emoji: "🧸", label: "亲子" },
     { keys: ["设计", "装修", "美学", "风格", "氛围"], emoji: "🎨", label: "设计" },
-    { keys: ["房间", "房型", "空间", "床", "床品", "卫浴", "浴室"], emoji: "🛏️", label: "房间" },
+    // 房间 / 设施 — generic room and amenities. 茶包/咖啡机/冰箱/电视/办公
+    // belong here, NOT in 早餐.
+    {
+      keys: [
+        "房间", "房型", "空间", "床", "床品", "床垫", "枕头", "被子",
+        "电视", "冰箱", "茶包", "咖啡机", "胶囊", "矿泉水", "迎宾水", "办公", "桌椅", "衣柜", "灯光", "插座",
+      ],
+      emoji: "🛏️",
+      label: "房间",
+    },
     { keys: ["服务", "前台", "礼宾", "管家", "态度"], emoji: "🛎️", label: "服务" },
     { keys: ["设施", "泳池", "健身", "spa", "酒吧", "lounge", "健身房"], emoji: "🏊", label: "设施" },
     { keys: ["夜景", "view", "景观", "落地窗", "海景", "江景", "山景"], emoji: "🌃", label: "景观" },
     { keys: ["入住体验", "整体体验", "总体感受"], emoji: "💭", label: "入住体验" },
   ];
 
+  // Score a fragment against a bank entry. Returns 0 if no positive hit, or
+  // if an avoidKey defeats a weak (non-strong) hit. Strong hits ignore
+  // avoidKeys (the dimension's own anchor word overrides). Score is a small
+  // integer: strong hit > regular hit > 0.
+  function scoreEntry(entry: BankEntry, text: string): number {
+    const lower = text.toLowerCase();
+    const hasStrong = (entry.strongKeys ?? []).some((k) => lower.includes(k.toLowerCase()));
+    const hasRegular = entry.keys.some((k) => lower.includes(k.toLowerCase()));
+    if (!hasStrong && !hasRegular) return 0;
+    if (hasStrong) return 2;
+    // Weak hit only — check avoidKeys.
+    const avoided = (entry.avoidKeys ?? []).some((k) => lower.includes(k.toLowerCase()));
+    if (avoided) return 0;
+    return 1;
+  }
+
   // Match on the value first (it carries the actual content). Only fall back
   // to the framework label when the value gives no signal — otherwise a slot
-  // labeled "服务" with breakfast content would be misrouted.
-  function pickSection(label: string, value: string) {
-    const valLower = value.toLowerCase();
-    for (const s of SECTION_BANK) {
-      if (s.keys.some((k) => valLower.includes(k.toLowerCase()))) return s;
+  // labeled "服务" with breakfast content would be misrouted. We pick the
+  // highest-scoring entry; ties are broken by SECTION_BANK order (more
+  // specific dimensions come first).
+  function pickSection(label: string, value: string): BankEntry | null {
+    const pickBest = (text: string): BankEntry | null => {
+      let best: BankEntry | null = null;
+      let bestScore = 0;
+      for (const s of SECTION_BANK) {
+        const sc = scoreEntry(s, text);
+        if (sc > bestScore) {
+          best = s;
+          bestScore = sc;
+        }
+      }
+      return best;
+    };
+    if (value) {
+      const v = pickBest(value);
+      if (v) return v;
     }
-    const labLower = label.toLowerCase();
-    for (const s of SECTION_BANK) {
-      if (s.keys.some((k) => labLower.includes(k.toLowerCase()))) return s;
+    if (label) {
+      const l = pickBest(label);
+      if (l) return l;
     }
     return null;
   }

@@ -244,4 +244,123 @@ function countCjk(text: string): number {
   assert(countCjk(note.body) <= 600, "body must be <= 600 CJK chars");
 }
 
+// Case 12: regression — room amenity sentence that mentions 茶包/咖啡 must NOT
+// be routed to 早餐. Reproduces a real screenshot where a 早餐 section
+// incorrectly absorbed "房间里还有大屏电视、小冰箱、免费矿泉水和茶包咖啡，
+// 办公区桌椅齐全，出差旅游都合适。" while the true breakfast sentence
+// belongs alone under 🍳 早餐.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        {
+          id: "f1",
+          label: "房间",
+          value: "房间里还有大屏电视、小冰箱、免费矿泉水和茶包咖啡，办公区桌椅齐全，出差旅游都合适。",
+        },
+        { id: "f2", label: "早餐", value: "早餐在一楼餐厅，有现做的鸡蛋和包子，能吃饱。" },
+      ],
+    }),
+  );
+  console.log("--- regression: 茶包咖啡 must not route to 早餐 ---");
+  console.log(note.body);
+  const breakfastPart = note.body.split("🍳 早餐")[1]?.split(/\n\n/)[0] ?? "";
+  const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
+  assert(!breakfastPart.includes("电视") && !breakfastPart.includes("冰箱") && !breakfastPart.includes("茶包咖啡"),
+    "regression: 早餐 section must not absorb room-amenity sentence with 茶包/咖啡");
+  assert(breakfastPart.includes("一楼餐厅") || breakfastPart.includes("鸡蛋") || breakfastPart.includes("包子"),
+    "regression: 早餐 section must contain the actual breakfast sentence");
+  assert(roomPart.includes("电视") || roomPart.includes("冰箱") || roomPart.includes("茶包咖啡"),
+    "regression: 房间 section must contain the room-amenity sentence");
+}
+
+// Case 13: regression — bathroom-facility sentence (干湿分离/热水/花洒/洗澡)
+// must NOT route to 卫生 (cleanliness). It should route to a dedicated
+// bathroom section (🚿 卫生间).
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        {
+          id: "f1",
+          label: "卫生",
+          value: "卫生间是干湿分离设计，24小时热水供应充足，花洒出水强劲，洗澡很舒服。",
+        },
+      ],
+    }),
+  );
+  console.log("--- regression: 卫生间/干湿分离 must not route to 卫生 ---");
+  console.log(note.body);
+  assert(note.body.includes("🚿 卫生间"), "regression: bathroom-facility text should route to 🚿 卫生间");
+  assert(!note.body.includes("🧼 卫生"), "regression: bathroom-facility text must NOT create a 🧼 卫生 section");
+}
+
+// Case 14: regression — cleanliness sentence still routes to 卫生 (we did not
+// break the clean case).
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "笔记", value: "房间打扫得一尘不染，床单和缝隙都很干净，没有异味。" },
+      ],
+    }),
+  );
+  console.log("--- regression: cleanliness still routes to 卫生 ---");
+  console.log(note.body);
+  assert(note.body.includes("🧼 卫生"), "regression: cleanliness sentence should still route to 🧼 卫生");
+  assert(!note.body.includes("🚿 卫生间"), "regression: pure cleanliness text should not route to 卫生间");
+}
+
+// Case 15: regression — bed / mattress sentence must NOT be absorbed by 隔音.
+// It should route to 🛏️ 房间.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "隔音", value: "床垫软硬适中，床品柔软，枕头也很舒服。" },
+      ],
+    }),
+  );
+  console.log("--- regression: 床垫/床品 must not route to 隔音 ---");
+  console.log(note.body);
+  assert(!note.body.includes("🤫 隔音"), "regression: bed-comfort text must not create a 🤫 隔音 section");
+  assert(note.body.includes("🛏️ 房间"), "regression: bed-comfort text should route to 🛏️ 房间");
+}
+
+// Case 16: regression — true noise sentence still routes to 隔音.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        { id: "f1", label: "笔记", value: "隔音真的很好，半夜窗外完全听不到车声和走廊声。" },
+      ],
+    }),
+  );
+  console.log("--- regression: real 隔音 still routes ---");
+  console.log(note.body);
+  assert(note.body.includes("🤫 隔音"), "regression: real noise/soundproofing should still route to 🤫 隔音");
+}
+
+// Case 17: regression — review pass moves a bathroom-facility sentence out of
+// a generic 房间 slot into 🚿 卫生间.
+{
+  const note = generateNote(
+    baseInput({
+      framework: [
+        {
+          id: "f1",
+          label: "房间",
+          value: "床很大，灯光也调得刚好。卫生间干湿分离，花洒水压很强。",
+        },
+      ],
+    }),
+  );
+  console.log("--- review pass: bathroom sentence in 房间 ---");
+  console.log(note.body);
+  assert(note.body.includes("🚿 卫生间"), "review: bathroom sentence in 房间 should be moved to 🚿 卫生间");
+  const roomPart = note.body.split("🛏️ 房间")[1]?.split(/\n\n/)[0] ?? "";
+  assert(!roomPart.includes("干湿分离") && !roomPart.includes("花洒"),
+    "review: 房间 section must not retain bathroom-facility content");
+}
+
 console.log("\nOK: all copy smoke assertions passed.");
