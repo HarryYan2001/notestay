@@ -154,6 +154,17 @@ export interface GeneratedNote {
   pageDesigns: Record<number, PageDesign>;  // keyed by pageLayout.index
   stickers: StickerOverlay[];               // each has pageIndex binding
   warnings: string[];
+  viralStyle?: ViralStyleSummary;
+}
+
+export interface ViralStyleSummary {
+  hasInput: boolean;
+  cues: string[];
+  cueLabels: string[];
+  status: string;
+  isFallback: boolean;
+  isXhsLink: boolean;
+  extractedTitle: string | null;
 }
 
 export interface PageLayout {
