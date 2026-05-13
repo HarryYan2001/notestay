@@ -262,9 +262,6 @@ export default function CreatePage() {
           <div>
             <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Step 1 / 2</div>
             <h1 className="mt-1 text-2xl md:text-3xl font-bold tracking-tight">素材输入</h1>
-            <p className="mt-2 text-sm text-muted-foreground whitespace-nowrap overflow-x-auto scroll-area-hide">
-              上传你的实拍照片,填写你的真实心得。我们只基于你提供的内容生成笔记,空字段不会被填空。
-            </p>
           </div>
           <button
             type="button"
@@ -316,7 +313,6 @@ export default function CreatePage() {
             {/* Text input switch — A and B are mutually exclusive. */}
             <Section
               title="文案输入"
-              subtitle="A · 框架化输入 与 B · 自由心得 二选一,切换后另一种的内容会被清空"
               testId="section-text"
             >
               <div
@@ -591,11 +587,7 @@ export default function CreatePage() {
                 </p>
               )}
               <p className="mt-3 text-xs text-muted-foreground">
-                受小红书登录态和反爬规则限制,本应用不会去抓取链接。
-                我们在浏览器内通过 OCR 识别截图中的中文正文,
-                只学习它的语气、节奏、emoji 与互动钩子,
-                据此调整本次生成的标题、正文段落与结尾。
-                <strong>不会复制原文,也不会影响封面与内页的视觉。</strong>
+                受小红书登录态和反爬规则限制,本应用无法抓取链接，通过上传图片OCR的方案实现该功能
               </p>
             </Section>
           </div>
@@ -605,7 +597,7 @@ export default function CreatePage() {
             {/* Images */}
             <Section
               title="图片上传"
-              subtitle="实拍照片会按外观 / 房间 / 早餐等自动归类"
+              subtitle="上传图片后，可以设置照片类型"
               testId="section-images"
             >
               <input

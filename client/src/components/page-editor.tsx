@@ -572,7 +572,6 @@ export function PageEditor({
             <ChevronRight className="size-4" />
           </button>
         </div>
-        <div className="text-[11px] hidden md:block">点击图层选中,双击图片进入裁切模式(滚轮缩放),再次双击图片或点击空白处退出</div>
       </div>
 
       <div
