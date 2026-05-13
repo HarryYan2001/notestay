@@ -135,9 +135,6 @@ export default function Home() {
                 我们只做博主真正需要的
               </h2>
             </div>
-            <p className="max-w-md text-sm text-muted-foreground">
-              不堆叠功能、不替你瞎编。NoteStay 的每个模块,都是为了让你的酒店笔记看起来像“你认真住过”的那种。
-            </p>
           </div>
           <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {FEATURES.map((f) => (

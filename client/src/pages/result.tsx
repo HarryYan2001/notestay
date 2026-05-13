@@ -433,7 +433,6 @@ export default function ResultPage() {
             <Block
               title="页面编辑"
               testId="block-page-editor"
-              subtitle="选中预览中的某一页即可在此编辑该页的图片 / 文字 / 贴纸 · 拖拽移动、圆点旋转、双击图片调整裁切"
             >
               <PageEditor
                 page={currentPage}
@@ -515,9 +514,8 @@ export default function ResultPage() {
 
             {/* Title alt suggestions + copy actions (body & title editing happen inline in preview) */}
             <Block
-              title="标题备选 & 文案复制"
+              title="备选标题"
               testId="block-text-actions"
-              subtitle="标题与正文请直接在左侧手机预览中编辑;此处列出最初生成的原始标题与备选标题,改过之后随时可一键切回。"
             >
               <div className="space-y-2">
                 {(() => {
@@ -581,7 +579,6 @@ export default function ResultPage() {
             <Block
               title="话题标签"
               testId="block-tags"
-              subtitle="默认生成 3 个标签,可自行添加或删除,标签将实时同步到左侧手机预览"
               actions={
                 <CopyBtn
                   active={copied === "tags"}
