@@ -485,8 +485,7 @@ export default function CreatePage() {
 
             {/* Hotel info */}
             <Section
-              title="酒店基础信息"
-              subtitle="仅填写真实信息,留空我们不会替你瞎编"
+              title="酒店基础信息（可选）"
               testId="section-hotel"
             >
               <div className="grid sm:grid-cols-2 gap-3">
@@ -587,7 +586,7 @@ export default function CreatePage() {
                 </p>
               )}
               <p className="mt-3 text-xs text-muted-foreground">
-                受小红书登录态和反爬规则限制,本应用无法抓取链接，通过上传图片OCR的方案实现该功能
+                受小红书登录态和反爬规则限制,本应用无法抓取链接，通过上传图片OCR的方案实现该功能。
               </p>
             </Section>
           </div>
