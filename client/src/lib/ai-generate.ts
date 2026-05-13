@@ -5,16 +5,30 @@
 //      design, page layout, page designs, stickers, screenshot/viral style
 //      summaries, warnings. This is fast, local, and does not depend on
 //      network.
-//   2. POST the user's text inputs + style + OCR profile to /api/generate-note,
-//      which calls Zhipu (BigModel) to produce the actual title / body / tags
-//      / comment seeds.
+//   2. Decide whether to call the AI:
+//      - If the user uploaded a style-learning screenshot AND OCR recovered
+//        usable text, the style imitation step needs the model. We POST the
+//        user's text inputs + style + OCR profile to /api/generate-note,
+//        which calls Zhipu (BigModel) to produce the actual title / body /
+//        tags / comment seeds. Hotel/scene photos uploaded for the cover do
+//        NOT trigger this path on their own — they are content, not style
+//        references.
+//      - Otherwise we return the local scaffold directly. The local
+//        generator already follows the user-approved Xiaohongshu rules
+//        (warm tone, no banned phrases, auto-clustered dimensions, ~500
+//        char body, dedicated price section, 3 default hashtags, no
+//        fabrication), so for the no-imitation path it produces the same
+//        kind of output without paying the latency or risking model
+//        failure.
 //   3. Merge AI text on top of the deterministic scaffold and return a
 //      `GeneratedNote` the result page can render as-is.
 //
-// If the AI call fails (missing key, network, parse error), we throw a
-// localized Error and the create page surfaces it. We do NOT silently fall
-// back to template output — the user explicitly asked for true AI-driven
-// generation.
+// If the AI call fails (missing key, network, parse error, malformed JSON,
+// timeout, etc.), we fall back to the local scaffold and surface a warning
+// telling the user that local fallback was used. The 503 "未配置" path is
+// the single exception that still throws as `AiNotConfiguredError` so the
+// create page can show its install-guidance banner — and only when the user
+// explicitly opted into the model by uploading a style screenshot.
 
 import { generateNote } from "./generate";
 import { STYLES } from "./styles";
@@ -223,6 +237,38 @@ export interface AiGenerateOptions {
   endpoint?: string;
   // Per-request timeout in ms. Defaults to FRONTEND_AI_TIMEOUT_MS.
   timeoutMs?: number;
+  // For tests: force the API path even when needsApiCall would return false,
+  // or force the local-only path even when a screenshot was provided.
+  forceApi?: boolean;
+  forceLocal?: boolean;
+}
+
+// True when the request needs the external model to do style imitation —
+// i.e. the user uploaded a 爆款笔记正文风格学习 screenshot and OCR recovered
+// usable text. Hotel/scene photos uploaded for the cover deck are content,
+// not style references, and do NOT trigger the API path on their own.
+export function needsApiCall(input: AppInputState): boolean {
+  const ts = input.screenshotRef?.textStyle;
+  return !!(ts && ts.hasText);
+}
+
+// Convert raw prose (when the model failed to produce JSON at all) into a
+// best-effort response shape that the merge step can consume. We never
+// fabricate hotel facts here — the prose is offered as a single body block
+// and we lean on the local scaffold for the title / hashtags / comment guide
+// downstream. Returns null if the prose is too short to be useful.
+function proseToResponse(raw: string): AiGenerateResponse | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/```[a-z]*\n?|\n?```/gi, "").trim();
+  if (cleaned.length < 20) return null;
+  return {
+    title: "",
+    altTitles: [],
+    body: cleaned,
+    hashtags: [],
+    commentGuide: [],
+    warnings: [],
+  };
 }
 
 // Frontend abort budget. Must be larger than the Vercel function
@@ -242,14 +288,41 @@ export class AiNotConfiguredError extends Error {
   }
 }
 
+// Add a single user-visible warning to a scaffold, dedupe-aware.
+function withWarning(note: GeneratedNote, warning: string): GeneratedNote {
+  if (note.warnings.includes(warning)) return note;
+  return { ...note, warnings: [...note.warnings, warning] };
+}
+
+const API_FAILURE_FALLBACK_PREFIX = "AI 调用失败，已自动切换为本地生成：";
+
 // Top-level call used by the create page. Returns a fully-merged
 // GeneratedNote ready to navigate to /result.
+//
+// IMPORTANT: this function always reads the CURRENT app input state passed in.
+// It never persists or reuses output from a previous call as input — every
+// regenerate starts from the same `AppInputState` the user is currently
+// editing. The local scaffold inside `generateNote(input)` is recomputed
+// fresh each call.
 export async function generateNoteWithAi(
   input: AppInputState,
   opts: AiGenerateOptions = {},
 ): Promise<GeneratedNote> {
   const scaffold = generateNote(input);
-  const payload = buildAiRequest(input);
+
+  // Decide whether to talk to the model at all. We only call the API when the
+  // user explicitly opted into style imitation via the 爆款笔记正文风格学习
+  // screenshot AND OCR produced usable text. Otherwise the local scaffold —
+  // which already follows the user-approved writing rules — is returned as is.
+  const apiRequired = opts.forceApi
+    ? true
+    : opts.forceLocal
+    ? false
+    : needsApiCall(input);
+  if (!apiRequired) {
+    return scaffold;
+  }
+
   const endpoint =
     opts.endpoint ||
     resolveAiApiUrl({
@@ -258,8 +331,13 @@ export async function generateNoteWithAi(
     });
   const fetchFn = opts.fetchImpl || (globalThis.fetch as typeof fetch);
   if (!fetchFn) {
-    throw new Error("当前运行环境缺少 fetch 实现。");
+    return withWarning(
+      scaffold,
+      `${API_FAILURE_FALLBACK_PREFIX}当前运行环境缺少 fetch 实现。`,
+    );
   }
+
+  const payload = buildAiRequest(input);
   const timeoutMs = opts.timeoutMs ?? FRONTEND_AI_TIMEOUT_MS;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   // Track whether the abort came from OUR timeout vs. the user / page unload,
@@ -284,11 +362,15 @@ export async function generateNoteWithAi(
     if (timer) clearTimeout(timer);
     if (isAbortError(err) || timedOut) {
       const seconds = Math.round(timeoutMs / 1000);
-      throw new Error(
-        `AI 生成超时（已等待 ${seconds} 秒）。请稍后重试，或减少输入内容/取消截图模仿后再试。`,
+      return withWarning(
+        scaffold,
+        `${API_FAILURE_FALLBACK_PREFIX}AI 生成超时（已等待 ${seconds} 秒）。`,
       );
     }
-    throw new Error(`无法连接到 AI 生成服务：${(err as Error).message}`);
+    return withWarning(
+      scaffold,
+      `${API_FAILURE_FALLBACK_PREFIX}无法连接到 AI 生成服务（${(err as Error).message}）。`,
+    );
   }
   if (timer) clearTimeout(timer);
 
@@ -302,14 +384,49 @@ export async function generateNoteWithAi(
   if (!res.ok) {
     const body = await safeReadJson(res);
     const msg = body?.error || `${res.status} ${res.statusText}`;
-    throw new Error(`AI 生成失败：${msg}`);
+    return withWarning(scaffold, `${API_FAILURE_FALLBACK_PREFIX}${msg}`);
   }
-  const ai = (await res.json()) as AiGenerateResponse;
-  if (!ai || typeof ai !== "object" || !ai.title || !ai.body) {
-    throw new Error("AI 生成失败：返回结果缺少 title 或 body。");
+  // Parse the response defensively. The server SHOULD return a strict shape,
+  // but if the upstream model emitted prose-with-JSON the server may have
+  // forwarded a partial / malformed body to keep the request usable. We accept
+  // partial fields and fill the missing pieces from the local scaffold.
+  let ai: AiGenerateResponse | null = null;
+  try {
+    const raw = (await res.json()) as any;
+    if (raw && typeof raw === "object") {
+      const looksUsable =
+        typeof raw.title === "string" || typeof raw.body === "string";
+      if (looksUsable) {
+        ai = raw as AiGenerateResponse;
+      } else if (typeof raw.body === "string" || typeof raw === "string") {
+        ai = proseToResponse(typeof raw === "string" ? raw : raw.body);
+      }
+    }
+  } catch {
+    ai = null;
   }
-  return mergeAiResponse(scaffold, ai);
+
+  if (!ai || (typeof ai.title !== "string" && typeof ai.body !== "string")) {
+    return withWarning(
+      scaffold,
+      `${API_FAILURE_FALLBACK_PREFIX}返回结果缺少 title 与 body。`,
+    );
+  }
+  // Always layer AI text on top of the scaffold so missing fields keep their
+  // local-rule defaults instead of vanishing.
+  const merged = mergeAiResponse(scaffold, {
+    title: typeof ai.title === "string" && ai.title.trim() ? ai.title : scaffold.title,
+    altTitles: Array.isArray(ai.altTitles) ? ai.altTitles : scaffold.altTitles,
+    body: typeof ai.body === "string" && ai.body.trim() ? ai.body : scaffold.body,
+    hashtags: Array.isArray(ai.hashtags) && ai.hashtags.length > 0 ? ai.hashtags : scaffold.tags,
+    commentGuide: Array.isArray(ai.commentGuide) ? ai.commentGuide : scaffold.commentSeeds,
+    warnings: Array.isArray(ai.warnings) ? ai.warnings : [],
+  });
+  return merged;
 }
+
+// Exposed for tests.
+export { API_FAILURE_FALLBACK_PREFIX };
 
 async function safeReadJson(res: Response): Promise<any> {
   try {

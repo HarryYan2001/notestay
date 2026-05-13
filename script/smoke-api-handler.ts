@@ -519,6 +519,53 @@ async function run() {
   }
 
   // ------------------------------------------------------------------
+  // Branch: model returned reasoning prose BEFORE the JSON object. This
+  // was the user-reported regression — "AI 返回内容不是合法 JSON：
+  // Unexpected token '我'". The robust extractor must isolate the first
+  // balanced JSON object and ignore the prose.
+  // ------------------------------------------------------------------
+  console.log("--- handler: model prose preamble + JSON returns 200 ---");
+  process.env.ZHIPU_API_KEY = "dummy-key-for-test";
+  try {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content:
+                  "我需要根据用户提供的酒店信息，写一篇笔记。\n" +
+                  JSON.stringify({
+                    title: "标题 from preamble",
+                    altTitles: ["备 1"],
+                    body: "正文。\n\n📍 位置\n市中心。",
+                    hashtags: ["#上海酒店"],
+                    commentGuide: ["问 1"],
+                    warnings: [],
+                  }) +
+                  "\n以上就是结果，希望对你有帮助。",
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as any;
+    const res = mockRes();
+    await handler(mockReq({ body: validPayload }), res);
+    assert(
+      res.statusCode === 200,
+      `prose-around-JSON must succeed (got ${res.statusCode}: ${JSON.stringify(res.body)})`,
+    );
+    assert(
+      res.body?.title === "标题 from preamble",
+      "title extracted from the embedded JSON, not the preamble",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.ZHIPU_API_KEY;
+  }
+
+  // ------------------------------------------------------------------
   // Branch: truly empty upstream content → 502 with a diagnostic blob
   // that lists the keys we saw (but NEVER leaks the API key / request).
   // ------------------------------------------------------------------

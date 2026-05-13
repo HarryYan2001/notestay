@@ -241,7 +241,49 @@ export function buildUserPrompt(req: AiGenerateRequest): string {
 
 // ───────────────── inlined: model output parsing ────────────────────────
 
-export function parseModelOutput(raw: string): AiGenerateResponse {
+// Find the first top-level balanced JSON object inside a string. See
+// shared/ai-prompt.ts:extractFirstJsonObject for the canonical implementation
+// and rationale. Duplicated here for the Vercel-zero-imports invariant.
+export function extractFirstJsonObject(s: string): string | null {
+  if (!s) return null;
+  let i = 0;
+  while (i < s.length && s[i] !== "{") i++;
+  if (i >= s.length) return null;
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let j = i; j < s.length; j++) {
+    const ch = s[j];
+    if (inStr) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return s.slice(i, j + 1);
+      }
+    }
+  }
+  return null;
+}
+
+export function parseModelOutput(
+  raw: string,
+  opts: { strict?: boolean } = {},
+): AiGenerateResponse {
+  const strict = opts.strict !== false;
   if (!raw || typeof raw !== "string") {
     throw new Error("AI 返回内容为空。");
   }
@@ -249,27 +291,34 @@ export function parseModelOutput(raw: string): AiGenerateResponse {
   if (body.startsWith("```")) {
     body = body.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   }
-  if (!body.startsWith("{")) {
-    const start = body.indexOf("{");
-    const end = body.lastIndexOf("}");
-    if (start >= 0 && end > start) body = body.slice(start, end + 1);
+  let candidate = body;
+  if (!candidate.startsWith("{")) {
+    const found = extractFirstJsonObject(body);
+    if (found) candidate = found;
+  } else {
+    const found = extractFirstJsonObject(body);
+    if (found && found.length < body.length) candidate = found;
   }
   let obj: any;
   try {
-    obj = JSON.parse(body);
+    obj = JSON.parse(candidate);
   } catch (err) {
-    throw new Error(`AI 返回内容不是合法 JSON：${(err as Error).message}`);
+    if (strict) {
+      throw new Error(`AI 返回内容不是合法 JSON：${(err as Error).message}`);
+    }
+    obj = null;
   }
   if (!obj || typeof obj !== "object") {
-    throw new Error("AI 返回 JSON 结构异常（非对象）。");
+    if (strict) throw new Error("AI 返回 JSON 结构异常（非对象）。");
+    obj = {};
   }
   const title = typeof obj.title === "string" ? obj.title.trim() : "";
-  if (!title) throw new Error("AI 返回缺少 title 字段。");
+  if (!title && strict) throw new Error("AI 返回缺少 title 字段。");
   const altTitles = Array.isArray(obj.altTitles)
     ? obj.altTitles.filter((x: any) => typeof x === "string" && x.trim()).map((x: string) => x.trim())
     : [];
   const bodyText = typeof obj.body === "string" ? obj.body.trim() : "";
-  if (!bodyText) throw new Error("AI 返回缺少 body 字段。");
+  if (!bodyText && strict) throw new Error("AI 返回缺少 body 字段。");
   const hashtagsRaw = Array.isArray(obj.hashtags) ? obj.hashtags : [];
   const hashtags = hashtagsRaw
     .filter((x: any) => typeof x === "string" && x.trim())
