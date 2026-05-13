@@ -14,6 +14,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   parseModelOutput,
+  extractFirstJsonObject,
   type AiGenerateRequest,
 } from "../shared/ai-prompt";
 import {
@@ -23,9 +24,34 @@ import {
   AiNotConfiguredError,
   FRONTEND_AI_TIMEOUT_MS,
   isAbortError,
+  needsApiCall,
+  API_FAILURE_FALLBACK_PREFIX,
 } from "../client/src/lib/ai-generate";
 import { generateNote } from "../client/src/lib/generate";
-import type { AppInputState } from "../client/src/lib/types";
+import type { AppInputState, ScreenshotRef } from "../client/src/lib/types";
+
+// A baseline reference-note screenshot OCR profile that turns ON the API
+// path. Tests that exercise the upstream Zhipu flow use this so the local
+// fallback short-circuit doesn't bypass the fetch call.
+function styleScreenshotRef(): ScreenshotRef {
+  return {
+    previewUrl: null,
+    filename: "ref.png",
+    textStyle: {
+      hasText: true,
+      charCount: 220,
+      cjkCount: 200,
+      tone: "dramatic",
+      cues: ["heavy_emoji", "exclamation_burst", "cta_collect"],
+      detectedEmoji: ["✨", "🥺", "💖"],
+      punctIntensity: 0.45,
+      avgSentenceLen: 14,
+      hashtagCount: 5,
+      status: "ok",
+      previewText: "（OCR preview text — should NOT leak into prompt）",
+    },
+  };
+}
 
 function assert(cond: unknown, msg: string) {
   if (!cond) {
@@ -196,6 +222,32 @@ function baseInput(overrides: Partial<AppInputState> = {}): AppInputState {
   const parsed3 = parseModelOutput(prefixedJunk);
   assert(parsed3.title === parsed1.title, "prose-prefixed JSON still parses");
 
+  // Trailing prose after the JSON object must not pollute the parse.
+  const trailingJunk = good + "\n\n以上就是生成结果，请查收。";
+  const parsed4 = parseModelOutput(trailingJunk);
+  assert(parsed4.title === parsed1.title, "trailing-prose JSON still parses");
+
+  // The specific failure shape from the user's bug report: the model
+  // produced reasoning prose like 我需要根据用户提供的… without any JSON.
+  // parseModelOutput in strict mode must throw, but in lenient (non-strict)
+  // mode must return an empty-shaped response that the client can fall
+  // back from instead of hard-crashing.
+  let threwOnProse = false;
+  try {
+    parseModelOutput("我需要根据用户提供的酒店信息，写一篇笔记。");
+  } catch {
+    threwOnProse = true;
+  }
+  assert(threwOnProse, "parseModelOutput must throw in strict mode on pure prose");
+  const lenient = parseModelOutput(
+    "我需要根据用户提供的酒店信息，写一篇笔记。",
+    { strict: false },
+  );
+  assert(
+    typeof lenient.title === "string" && typeof lenient.body === "string",
+    "parseModelOutput(non-strict) must return a response shape",
+  );
+
   let threw = false;
   try {
     parseModelOutput("not json at all");
@@ -203,6 +255,23 @@ function baseInput(overrides: Partial<AppInputState> = {}): AppInputState {
     threw = true;
   }
   assert(threw, "parseModelOutput must throw on irrecoverable garbage");
+
+  // extractFirstJsonObject helper coverage — should isolate the first
+  // balanced object even when nested braces or string-quoted braces appear.
+  assert(
+    extractFirstJsonObject('garbage {"a": 1} tail') === '{"a": 1}',
+    "extractFirstJsonObject finds simple object",
+  );
+  assert(
+    extractFirstJsonObject('我需要根据用户提供的{"title":"t","body":"b"}然后…') ===
+      '{"title":"t","body":"b"}',
+    "extractFirstJsonObject works after Chinese preamble (the user-reported bug shape)",
+  );
+  assert(
+    extractFirstJsonObject('{"a":{"b":"}"}}') === '{"a":{"b":"}"}}',
+    "extractFirstJsonObject handles nested objects and braces inside strings",
+  );
+  assert(extractFirstJsonObject("no braces here") === null, "no-object returns null");
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +322,10 @@ async function runFetchMocks() {
     );
   };
 
-  const merged = await generateNoteWithAi(baseInput(), {
+  // The 200 path needs the API to actually be reached — attach a style
+  // screenshot so needsApiCall() returns true.
+  const apiInput = baseInput({ screenshotRef: styleScreenshotRef() });
+  const merged = await generateNoteWithAi(apiInput, {
     fetchImpl: mockOk,
     endpoint: "/api/generate-note",
   });
@@ -264,6 +336,49 @@ async function runFetchMocks() {
   assert(capturedBody.textStyleStrength === "medium", "request must carry strength");
   assert(merged.title === "AI 标题", "merged note uses AI title");
 
+  // -------------------------------------------------------------------
+  // Case: with NO style screenshot, the client should never call the API
+  // at all and must short-circuit to the local scaffold. This is the
+  // "speed" optimisation — hotel/scene photos on their own MUST NOT
+  // trigger an API request.
+  // -------------------------------------------------------------------
+  console.log("--- generateNoteWithAi: no style screenshot → skips API entirely ---");
+  let calledFetch = false;
+  const trackingFetch: typeof fetch = async () => {
+    calledFetch = true;
+    return new Response("{}", { status: 200 });
+  };
+  const local = await generateNoteWithAi(baseInput(), {
+    fetchImpl: trackingFetch,
+    endpoint: "/api/generate-note",
+  });
+  assert(!calledFetch, "no-style-screenshot path must NOT call fetch");
+  assert(typeof local.title === "string" && local.title.length > 0, "local scaffold must produce a title");
+  assert(typeof local.body === "string" && local.body.length > 0, "local scaffold must produce body");
+  assert(needsApiCall(baseInput()) === false, "needsApiCall returns false without screenshot");
+  assert(needsApiCall(apiInput) === true, "needsApiCall returns true with usable style OCR");
+
+  // Even when the user uploaded normal hotel photos (but no style screenshot),
+  // we still must NOT call the API — photos are content, not style references.
+  let calledFetch2 = false;
+  const trackingFetch2: typeof fetch = async () => {
+    calledFetch2 = true;
+    return new Response("{}", { status: 200 });
+  };
+  await generateNoteWithAi(
+    baseInput({
+      images: [
+        { id: "img1", url: "blob:x", name: "lobby.jpg", category: "大堂" },
+        { id: "img2", url: "blob:y", name: "room.jpg", category: "房间" },
+      ],
+    }),
+    { fetchImpl: trackingFetch2, endpoint: "/api/generate-note" },
+  );
+  assert(
+    !calledFetch2,
+    "uploading hotel photos alone must NOT trigger API call",
+  );
+
   console.log("--- generateNoteWithAi: mocked 503 surfaces AiNotConfiguredError ---");
   const mock503: typeof fetch = async () =>
     new Response(JSON.stringify({ error: "未配置 ZHIPU_API_KEY" }), {
@@ -272,34 +387,57 @@ async function runFetchMocks() {
     });
   let saw503Error = false;
   try {
-    await generateNoteWithAi(baseInput(), { fetchImpl: mock503, endpoint: "/api/generate-note" });
+    await generateNoteWithAi(apiInput, { fetchImpl: mock503, endpoint: "/api/generate-note" });
   } catch (err) {
     saw503Error = err instanceof AiNotConfiguredError;
   }
   assert(saw503Error, "503 must throw AiNotConfiguredError");
 
-  console.log("--- generateNoteWithAi: mocked 502 surfaces generic Error ---");
+  console.log("--- generateNoteWithAi: mocked 502 falls back to local generation with warning ---");
   const mock502: typeof fetch = async () =>
     new Response(JSON.stringify({ error: "模型超时" }), {
       status: 502,
       headers: { "Content-Type": "application/json" },
     });
-  let saw502Error: any = null;
-  try {
-    await generateNoteWithAi(baseInput(), { fetchImpl: mock502, endpoint: "/api/generate-note" });
-  } catch (err) {
-    saw502Error = err;
-  }
-  assert(saw502Error && !(saw502Error instanceof AiNotConfiguredError), "502 must throw plain Error, not AiNotConfiguredError");
-  assert(/模型超时/.test((saw502Error as Error).message), "502 error message must include server error string");
+  const fallback502 = await generateNoteWithAi(apiInput, {
+    fetchImpl: mock502,
+    endpoint: "/api/generate-note",
+  });
+  assert(
+    typeof fallback502.title === "string" && fallback502.title.length > 0,
+    "502 fallback still returns a usable note",
+  );
+  assert(
+    fallback502.warnings.some((w) =>
+      w.startsWith(API_FAILURE_FALLBACK_PREFIX) && /模型超时/.test(w),
+    ),
+    `502 fallback must surface a warning explaining the fallback, got warnings=${JSON.stringify(fallback502.warnings)}`,
+  );
+
+  console.log("--- generateNoteWithAi: mocked malformed JSON falls back to local ---");
+  const mockBadJson: typeof fetch = async () =>
+    new Response("not a json body", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  const fallbackBad = await generateNoteWithAi(apiInput, {
+    fetchImpl: mockBadJson,
+    endpoint: "/api/generate-note",
+  });
+  assert(
+    fallbackBad.warnings.some((w) => w.startsWith(API_FAILURE_FALLBACK_PREFIX)),
+    "malformed JSON response must trigger fallback warning",
+  );
+  assert(
+    typeof fallbackBad.body === "string" && fallbackBad.body.length > 0,
+    "fallback body must be non-empty",
+  );
 
   // -------------------------------------------------------------------
   // Case: client-side AbortError must surface as a friendly Chinese
-  // timeout message, NOT the raw "signal is aborted without reason"
-  // string browsers throw. This is the exact production regression that
-  // caused the screenshot the user reported.
+  // timeout warning — the local fallback runs and the user is told why.
   // -------------------------------------------------------------------
-  console.log("--- generateNoteWithAi: AbortError maps to friendly timeout message ---");
+  console.log("--- generateNoteWithAi: AbortError falls back to local with friendly warning ---");
   const abortingFetch: typeof fetch = async (_url: any, init?: any) => {
     // Wait for the signal to abort, then reject with the same shape
     // modern fetch implementations use.
@@ -314,31 +452,57 @@ async function runFetchMocks() {
       signal?.addEventListener("abort", fail, { once: true });
     });
   };
-  let sawAbortErr: any = null;
-  try {
-    await generateNoteWithAi(baseInput(), {
-      fetchImpl: abortingFetch,
-      endpoint: "/api/generate-note",
-      // Tight timeout so the test runs fast; abort triggers within ~50ms.
-      timeoutMs: 50,
+  const fallbackAbort = await generateNoteWithAi(apiInput, {
+    fetchImpl: abortingFetch,
+    endpoint: "/api/generate-note",
+    timeoutMs: 50,
+  });
+  const abortWarning = fallbackAbort.warnings.find((w) => /AI 生成超时/.test(w));
+  assert(abortWarning, `abort must surface 'AI 生成超时' in warnings, got ${JSON.stringify(fallbackAbort.warnings)}`);
+  assert(
+    !fallbackAbort.warnings.some((w) => /signal is aborted/i.test(w)),
+    "raw 'signal is aborted' string must NOT leak to UI",
+  );
+
+  // -------------------------------------------------------------------
+  // Case: regenerating multiple times with progressively richer user
+  // input must never truncate the body — each pass must reflect the
+  // current inputs, not a previously shortened output. We simulate the
+  // "API fails on regenerate" path so we exercise the fallback, which is
+  // the regression the user reported.
+  // -------------------------------------------------------------------
+  console.log("--- generateNoteWithAi: repeated regenerate preserves current input content ---");
+  const failingFetch: typeof fetch = async () =>
+    new Response(JSON.stringify({ error: "transient" }), {
+      status: 502,
+      headers: { "Content-Type": "application/json" },
     });
-  } catch (err) {
-    sawAbortErr = err;
-  }
-  assert(sawAbortErr, "abort must throw");
-  const abortMsg = (sawAbortErr as Error).message;
+  const inputShort = baseInput({ screenshotRef: styleScreenshotRef() });
+  const inputRich = baseInput({
+    screenshotRef: styleScreenshotRef(),
+    framework: [
+      { id: "f1", label: "位置", value: "酒店离地铁口走 3 分钟，旁边就是商圈，逛街吃饭很方便。" },
+      { id: "f2", label: "房间", value: "推开门是落地窗，能看到江景，床品是丝绒触感，洗手间干湿分离。" },
+      { id: "f3", label: "早餐", value: "餐厅自助早餐很丰富，有现做蛋类、咖啡和水果，国风甜点也好吃。" },
+      { id: "f4", label: "服务", value: "前台办理 check-in 速度快，礼宾还主动帮忙叫车。" },
+    ],
+  });
+  const r1 = await generateNoteWithAi(inputShort, { fetchImpl: failingFetch, endpoint: "/api/generate-note" });
+  const r2 = await generateNoteWithAi(inputRich, { fetchImpl: failingFetch, endpoint: "/api/generate-note" });
+  const r3 = await generateNoteWithAi(inputRich, { fetchImpl: failingFetch, endpoint: "/api/generate-note" });
   assert(
-    /AI 生成超时/.test(abortMsg),
-    `abort message must mention 'AI 生成超时', got: ${abortMsg}`,
+    r2.body.length > r1.body.length,
+    `richer input must yield longer body (r1=${r1.body.length}, r2=${r2.body.length})`,
   );
   assert(
-    !/signal is aborted/i.test(abortMsg),
-    `raw 'signal is aborted' string must NOT leak to UI, got: ${abortMsg}`,
+    r3.body.length >= r2.body.length * 0.9,
+    `repeating regenerate with the same rich input must not shrink body (r2=${r2.body.length}, r3=${r3.body.length})`,
   );
-  assert(
-    !(sawAbortErr instanceof AiNotConfiguredError),
-    "abort must not be classified as AiNotConfiguredError",
-  );
+  // Each regeneration must reflect the CURRENT inputs, not a previously
+  // shortened body. We assert that the framework content the user typed
+  // makes it into the regenerated body.
+  assert(/地铁口|商圈|逛街/.test(r3.body), "regenerated body must reflect current location input");
+  assert(/落地窗|江景|床品/.test(r3.body), "regenerated body must reflect current room input");
 
   // -------------------------------------------------------------------
   // Case: isAbortError recognises the various shapes browsers / Node use.
