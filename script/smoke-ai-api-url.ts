@@ -82,4 +82,40 @@ assert(
   "blank override must fall through to GitHub Pages rule",
 );
 
+console.log("--- resolveAiApiUrl: domestic backend override (Volcengine, etc.) ---");
+// .cn HTTPS host (typical Volcengine + ICP-备案 setup)
+assert(
+  resolveAiApiUrl({
+    hostname: "harryyan2001.github.io",
+    buildOverride: "https://api.notestay.cn",
+  }) === "https://api.notestay.cn/api/generate-note",
+  "domestic .cn host override must produce absolute URL with route suffix",
+);
+// HTTP + IP + custom port (during testing, pre-domain/HTTPS)
+assert(
+  resolveAiApiUrl({
+    hostname: "harryyan2001.github.io",
+    buildOverride: "http://1.2.3.4:5000",
+  }) === "http://1.2.3.4:5000/api/generate-note",
+  "domestic raw IP + port override must produce HTTP URL with route suffix",
+);
+// Override must NOT be ignored just because the hostname is *.github.io
+// (regression guard: GH Pages rule must run only when override is empty).
+assert(
+  !resolveAiApiUrl({
+    hostname: "harryyan2001.github.io",
+    buildOverride: "https://api.notestay.cn",
+  }).includes("vercel.app"),
+  "Vercel default must NOT win when override is present",
+);
+// Override from Vercel host (so a Vercel preview can also be pointed at the
+// domestic backend during dual-stack testing).
+assert(
+  resolveAiApiUrl({
+    hostname: "notestay.vercel.app",
+    buildOverride: "https://api.notestay.cn",
+  }) === "https://api.notestay.cn/api/generate-note",
+  "Vercel host with override must follow the override, not same-origin",
+);
+
 console.log("AI API URL resolver smoke OK");

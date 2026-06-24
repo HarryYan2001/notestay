@@ -3,6 +3,8 @@
 NoteStay 的「生成笔记 / 重新生成」按钮通过 `/api/generate-note` 调用智谱（BigModel）GLM 大模型生成正文。该 API 路由仅在 Vercel（或同等 Node 后端环境）下可用，必须把 `ZHIPU_API_KEY` 配置为服务器端环境变量。
 
 > ⚠️ GitHub Pages 等纯静态托管无法运行该 API。若仅在 Pages 上部署，前端会调用失败并提示「AI 生成服务未配置」，请改用 Vercel。
+>
+> 🇨🇳 中国大陆访问 Vercel 不稳定，建议把同一份 Express 后端部署到国内云主机（火山引擎等）。详见 [VOLCENGINE_DEPLOY.md](./VOLCENGINE_DEPLOY.md)。前端只需在构建时设置 `VITE_AI_API_BASE_URL=https://api.your-domain.cn` 即可指向国内后端，其它代码无需改动。
 
 ## 1. 准备工作
 
